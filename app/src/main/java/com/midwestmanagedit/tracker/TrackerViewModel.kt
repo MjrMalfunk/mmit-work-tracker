@@ -1,0 +1,104 @@
+package com.midwestmanagedit.tracker
+
+import android.app.Application
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.midwestmanagedit.tracker.data.RideEntity
+import com.midwestmanagedit.tracker.data.ShiftEntity
+import com.midwestmanagedit.tracker.data.TrackerRepository
+import com.midwestmanagedit.tracker.domain.AcquisitionMode
+import com.midwestmanagedit.tracker.domain.Platform
+import com.midwestmanagedit.tracker.domain.QueueMode
+import com.midwestmanagedit.tracker.tracking.LocationMemory
+import com.midwestmanagedit.tracker.tracking.TrackingService
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.io.File
+import com.midwestmanagedit.tracker.export.ShiftExporter
+
+class TrackerViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository: TrackerRepository = (application as TrackerApplication).repository
+    val activeShift: StateFlow<ShiftEntity?> = repository.observeActiveShift()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val pendingRides: StateFlow<List<RideEntity>> = activeShift
+        .flatMapLatest { shift -> shift?.let { repository.observePendingRides(it.id) } ?: flowOf(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val latestCompleted: StateFlow<ShiftEntity?> = repository.observeLatestCompletedShift()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val message = MutableStateFlow<String?>(null)
+
+    fun start(platform: Platform, queueMode: QueueMode, odometer: Double, firstRide: Boolean) = act {
+        requireLocation()
+        repository.startShift(platform, queueMode, odometer, LocationMemory.stamp(), firstRide)
+        startTrackingService()
+    }
+
+    fun startFieldNation(workOrderNumber: String, roundTrip: Boolean, odometer: Double) = act {
+        requireLocation()
+        repository.startFieldNation(workOrderNumber, roundTrip, odometer, LocationMemory.stamp())
+        startTrackingService()
+    }
+
+    fun fieldArriveSite() = act { repository.fieldArriveSite(LocationMemory.stamp()) }
+    fun fieldStartWork() = act { repository.fieldStartWork(LocationMemory.stamp()) }
+    fun fieldCompleteWork() = act { repository.fieldCompleteWork(LocationMemory.stamp()) }
+    fun fieldCheckOut() = act { repository.fieldCheckOut(LocationMemory.stamp()) }
+
+    fun queue(mode: AcquisitionMode) = act { repository.acceptOrQueueRide(mode, LocationMemory.stamp()) }
+    fun pickup() = act { repository.pickup(LocationMemory.stamp()) }
+    fun dropOff(startNext: Boolean) = act { repository.dropOff(startNext, LocationMemory.stamp()) }
+    fun startPending() = act { repository.startOldestPending(LocationMemory.stamp()) }
+    fun losePending() = act { repository.loseOldestPending(LocationMemory.stamp()) }
+
+    // NEW: cancel the active ride
+    fun cancelRide() = act { repository.cancelActiveRide(LocationMemory.stamp()) }
+
+    fun queueMode(mode: QueueMode) = act { repository.changeQueueMode(mode, LocationMemory.stamp()) }
+    fun breakMode(start: Boolean) = act { repository.setBreak(start, LocationMemory.stamp()) }
+    fun endShift() = act { repository.endShift(LocationMemory.stamp()) }
+    fun arriveHome(odometer: Double) = act {
+        val shift = activeShift.value ?: error("No outing to finish.")
+        repository.arriveHome(shift.id, odometer, LocationMemory.stamp())
+        getApplication<Application>().stopService(Intent(getApplication(), TrackingService::class.java))
+    }
+
+    fun clearMessage() { message.value = null }
+
+    fun exportLatest(onReady: (File) -> Unit) = act {
+        val shift = latestCompleted.value ?: error("No completed outing to export.")
+        onReady(ShiftExporter(getApplication<Application>(), repository).export(shift.id))
+    }
+
+    private fun act(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            runCatching { block() }
+                .onFailure { message.value = it.message ?: "That action could not be recorded." }
+        }
+    }
+
+    private fun requireLocation() {
+        val app = getApplication<Application>()
+        val fine = ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_COARSE_LOCATION)
+        check(fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED) {
+            "Location permission is required to start tracking."
+        }
+    }
+
+    private fun startTrackingService() {
+        val app = getApplication<Application>()
+        ContextCompat.startForegroundService(
+            app,
+            Intent(app, TrackingService::class.java).setAction(TrackingService.ACTION_START),
+        )
+    }
+}

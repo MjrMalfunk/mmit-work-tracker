@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">MMIT Work Tracker</string>
+    <string name="tracking_channel">Active shift tracking</string>
+    <string name="tracking_channel_description">Shows controls while MMIT Tracker records a shift.</string>
+</resources>

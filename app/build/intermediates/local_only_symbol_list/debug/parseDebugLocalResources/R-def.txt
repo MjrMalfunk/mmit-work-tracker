@@ -1,0 +1,7 @@
+R_DEF: Internal format may change without notice
+local
+string app_name
+string tracking_channel
+string tracking_channel_description
+style Theme.MMITTracker
+xml file_paths
