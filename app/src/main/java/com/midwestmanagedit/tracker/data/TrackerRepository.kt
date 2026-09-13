@@ -12,7 +12,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
 class TrackerRepository(private val database: TrackerDatabase) {
-    private val dao = database.trackerDao()
+    val dao = database.trackerDao()
 
     fun observeActiveShift(): Flow<ShiftEntity?> = dao.observeActiveShift()
     fun observeLatestCompletedShift(): Flow<ShiftEntity?> = dao.observeLatestCompletedShift()
@@ -118,16 +118,33 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(shift.id, ride.id, EventType.QUEUE_DISAPPEARED, stamp)
     }
 
-    private suspend fun requireShift(required: ShiftState? = null): ShiftEntity {
+    // ------------------------------------------------------------
+    // REQUIRED BY ShiftExporter.kt
+    // ------------------------------------------------------------
+
+    suspend fun shiftWithRides(shiftId: String): ShiftWithRides? =
+        dao.shiftWithRides(shiftId)
+
+    suspend fun events(shiftId: String): List<TrackingEventEntity> =
+        dao.events(shiftId)
+
+    suspend fun locations(shiftId: String): List<LocationPointEntity> =
+        dao.locations(shiftId)
+
+    // ------------------------------------------------------------
+    // INTERNAL HELPERS
+    // ------------------------------------------------------------
+
+    suspend fun requireShift(required: ShiftState? = null): ShiftEntity {
         val shift = dao.activeShift() ?: error("No active shift.")
         if (required != null) check(shift.state == required.name) { "Shift must be $required." }
         return shift
     }
 
-    private suspend fun requireRide(id: String?): RideEntity =
+    suspend fun requireRide(id: String?): RideEntity =
         id?.let { dao.ride(it) } ?: error("Active ride not found.")
 
-    private suspend fun requireFieldShift(required: ShiftState): ShiftEntity {
+    suspend fun requireFieldShift(required: ShiftState): ShiftEntity {
         val shift = requireShift(required)
         check(shift.platform == Platform.FIELD_NATION.name) { "This action requires a FieldNation outing." }
         return shift
@@ -136,7 +153,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
     private fun jsonEscape(value: String): String =
         value.replace("\\", "\\\\").replace("\"", "\\\"")
 
-    private suspend fun event(
+    suspend fun event(
         shiftId: String,
         rideId: String?,
         type: EventType,
