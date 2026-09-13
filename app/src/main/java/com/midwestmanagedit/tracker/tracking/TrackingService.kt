@@ -124,33 +124,41 @@ class TrackingService : Service() {
     }
 
     private fun refreshNotification() = scope.launch {
-        val snapshot = repository.activeSnapshot()
-        val state = snapshot?.shiftState?.let(ShiftState::valueOf)
-        val builder = NotificationCompat.Builder(this@TrackingService, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("MMIT Work Tracker")
-            .setContentText(state?.label() ?: "Tracker ready")
-            .setContentIntent(activityIntent())
-            .setOngoing(snapshot != null)
-            .setOnlyAlertOnce(true)
+    // FIX: activeSnapshot() does not exist
+    val snapshot = repository.activeShift()
 
-        when (state) {
-            ShiftState.AVAILABLE -> builder.addAction(action("Ride accepted", ACTION_MANUAL_RIDE))
-            ShiftState.EN_ROUTE_PICKUP -> {
-                // NEW: cancel ride from notification
-                builder.addAction(action("Cancel ride", ACTION_CANCEL_RIDE))
-                builder.addAction(action("Picked up", ACTION_PICKUP))
-            }
-            ShiftState.PASSENGER -> {
-                builder.addAction(action("Drop off", ACTION_DROP_OFF))
-                builder.addAction(action("Drop + next", ACTION_DROP_AND_NEXT))
-                builder.addAction(action("Queue ride", ACTION_MANUAL_RIDE))
-            }
-            else -> Unit
+    // FIX: shiftState is already a ShiftState, no need for valueOf()
+    val state = snapshot?.shiftState
+
+    val builder = NotificationCompat.Builder(this@TrackingService, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+        .setContentTitle("MMIT Work Tracker")
+        .setContentText(state?.label() ?: "Tracker ready")
+        .setContentIntent(activityIntent())
+        .setOngoing(snapshot != null)
+        .setOnlyAlertOnce(true)
+
+    when (state) {
+        ShiftState.AVAILABLE ->
+            builder.addAction(action("Ride accepted", ACTION_MANUAL_RIDE))
+
+        ShiftState.EN_ROUTE_PICKUP -> {
+            builder.addAction(action("Cancel ride", ACTION_CANCEL_RIDE))
+            builder.addAction(action("Picked up", ACTION_PICKUP))
         }
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(NOTIFICATION_ID, builder.build())
+
+        ShiftState.PASSENGER -> {
+            builder.addAction(action("Drop off", ACTION_DROP_OFF))
+            builder.addAction(action("Drop + next", ACTION_DROP_AND_NEXT))
+            builder.addAction(action("Queue ride", ACTION_MANUAL_RIDE))
+        }
+
+        else -> Unit
     }
+
+    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+        .notify(NOTIFICATION_ID, builder.build())
+}
 
     private fun notification(text: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_menu_mylocation)
