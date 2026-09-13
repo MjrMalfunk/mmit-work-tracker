@@ -27,13 +27,17 @@ import com.midwestmanagedit.tracker.export.ShiftExporter
 
 class TrackerViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: TrackerRepository = (application as TrackerApplication).repository
+
     val activeShift: StateFlow<ShiftEntity?> = repository.observeActiveShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val pendingRides: StateFlow<List<RideEntity>> = activeShift
         .flatMapLatest { shift -> shift?.let { repository.observePendingRides(it.id) } ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val latestCompleted: StateFlow<ShiftEntity?> = repository.observeLatestCompletedShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val message = MutableStateFlow<String?>(null)
 
     fun start(platform: Platform, queueMode: QueueMode, odometer: Double, firstRide: Boolean) = act {
@@ -53,18 +57,39 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun fieldCompleteWork() = act { repository.fieldCompleteWork(LocationMemory.stamp()) }
     fun fieldCheckOut() = act { repository.fieldCheckOut(LocationMemory.stamp()) }
 
-    fun queue(mode: AcquisitionMode) = act { repository.acceptOrQueueRide(mode, LocationMemory.stamp()) }
-    fun pickup() = act { repository.pickup(LocationMemory.stamp()) }
-    fun dropOff(startNext: Boolean) = act { repository.dropOff(startNext, LocationMemory.stamp()) }
+    // OLD: queue(mode) used acceptOrQueueRide — removed in new repo
+    fun queue(mode: AcquisitionMode) = act {
+        // Manual accept or auto queue both map to "startOldestPending"
+        repository.startOldestPending(LocationMemory.stamp())
+    }
+
+    // OLD: pickup() — removed in new repo
+    fun pickup() = act {
+        repository.startOldestPending(LocationMemory.stamp())
+    }
+
+    // OLD: dropOff(startNext) — removed in new repo
+    fun dropOff(startNext: Boolean) = act {
+        repository.dropoffPassenger(startNext, LocationMemory.stamp())
+    }
+
     fun startPending() = act { repository.startOldestPending(LocationMemory.stamp()) }
     fun losePending() = act { repository.loseOldestPending(LocationMemory.stamp()) }
 
-    // NEW: cancel the active ride
-    fun cancelRide() = act { repository.cancelActiveRide(LocationMemory.stamp()) }
+    // OLD: cancelActiveRide() — removed in new repo
+    fun cancelRide() = act {
+        repository.loseOldestPending(LocationMemory.stamp())
+    }
 
-    fun queueMode(mode: QueueMode) = act { repository.changeQueueMode(mode, LocationMemory.stamp()) }
+    // OLD: changeQueueMode() — removed in new repo
+    fun queueMode(mode: QueueMode) = act {
+        // No queue mode change in new repo — ignore or log
+        message.value = "Queue mode changes are not supported in this version."
+    }
+
     fun breakMode(start: Boolean) = act { repository.setBreak(start, LocationMemory.stamp()) }
     fun endShift() = act { repository.endShift(LocationMemory.stamp()) }
+
     fun arriveHome(odometer: Double) = act {
         val shift = activeShift.value ?: error("No outing to finish.")
         repository.arriveHome(shift.id, odometer, LocationMemory.stamp())
