@@ -23,7 +23,6 @@ import com.midwestmanagedit.tracker.MainActivity
 import com.midwestmanagedit.tracker.R
 import com.midwestmanagedit.tracker.TrackerApplication
 import com.midwestmanagedit.tracker.data.LocationPointEntity
-import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.ShiftState
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -67,13 +66,23 @@ class TrackingService : Service() {
             val stamp = LocationMemory.stamp()
             runCatching {
                 when (intent?.action) {
-                    ACTION_PICKUP -> repository.pickup(stamp)
-                    ACTION_DROP_OFF -> repository.dropOff(false, stamp)
-                    ACTION_DROP_AND_NEXT -> repository.dropOff(true, stamp)
-                    ACTION_MANUAL_RIDE -> repository.acceptOrQueueRide(AcquisitionMode.MANUAL_ACCEPT, stamp)
-                    ACTION_AUTO_RIDE -> repository.acceptOrQueueRide(AcquisitionMode.AUTO_QUEUE, stamp)
-                    // NEW: cancel active ride
-                    ACTION_CANCEL_RIDE -> repository.cancelActiveRide(stamp)
+                    ACTION_PICKUP ->
+                        repository.startOldestPending(stamp)
+
+                    ACTION_DROP_OFF ->
+                        repository.dropoffPassenger(startNext = false, stamp)
+
+                    ACTION_DROP_AND_NEXT ->
+                        repository.dropoffPassenger(startNext = true, stamp)
+
+                    ACTION_MANUAL_RIDE ->
+                        repository.startOldestPending(stamp)
+
+                    ACTION_AUTO_RIDE ->
+                        repository.startOldestPending(stamp)
+
+                    ACTION_CANCEL_RIDE ->
+                        repository.loseOldestPending(stamp)
                 }
             }
             refreshNotification()
@@ -105,68 +114,68 @@ class TrackingService : Service() {
     private fun record(location: Location) {
         LocationMemory.update(location)
         if (location.accuracy > 100f) return
+
         scope.launch {
-            val snapshot = repository.activeSnapshot() ?: return@launch
-            repository.recordLocation(
+            val shift = repository.dao.activeShift() ?: return@launch
+
+            repository.dao.insertLocation(
                 LocationPointEntity(
                     id = UUID.randomUUID().toString(),
-                    shiftId = snapshot.shiftId,
-                    rideId = snapshot.activeRideId,
-                    phase = snapshot.shiftState,
+                    shiftId = shift.id,
+                    rideId = shift.activeRideId,
+                    phase = shift.state,
                     occurredAtEpochMs = location.time,
                     latitude = location.latitude,
                     longitude = location.longitude,
                     accuracyMeters = location.accuracy,
                     speedMetersPerSecond = location.speed.takeIf { location.hasSpeed() },
-                ),
+                )
             )
         }
     }
 
     private fun refreshNotification() = scope.launch {
-    // FIX: activeSnapshot() does not exist
-    val snapshot = repository.activeShift()
+        val snapshot = repository.dao.activeShift()
+        val state = snapshot?.state?.let(ShiftState::valueOf)
 
-    // FIX: shiftState is already a ShiftState, no need for valueOf()
-    val state = snapshot?.shiftState
+        val builder = NotificationCompat.Builder(this@TrackingService, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("MMIT Work Tracker")
+            .setContentText(state?.label() ?: "Tracker ready")
+            .setContentIntent(activityIntent())
+            .setOngoing(snapshot != null)
+            .setOnlyAlertOnce(true)
 
-    val builder = NotificationCompat.Builder(this@TrackingService, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-        .setContentTitle("MMIT Work Tracker")
-        .setContentText(state?.label() ?: "Tracker ready")
-        .setContentIntent(activityIntent())
-        .setOngoing(snapshot != null)
-        .setOnlyAlertOnce(true)
+        when (state) {
+            ShiftState.AVAILABLE ->
+                builder.addAction(action("Ride accepted", ACTION_MANUAL_RIDE))
 
-    when (state) {
-        ShiftState.AVAILABLE ->
-            builder.addAction(action("Ride accepted", ACTION_MANUAL_RIDE))
+            ShiftState.EN_ROUTE_PICKUP -> {
+                builder.addAction(action("Cancel ride", ACTION_CANCEL_RIDE))
+                builder.addAction(action("Picked up", ACTION_PICKUP))
+            }
 
-        ShiftState.EN_ROUTE_PICKUP -> {
-            builder.addAction(action("Cancel ride", ACTION_CANCEL_RIDE))
-            builder.addAction(action("Picked up", ACTION_PICKUP))
+            ShiftState.PASSENGER -> {
+                builder.addAction(action("Drop off", ACTION_DROP_OFF))
+                builder.addAction(action("Drop + next", ACTION_DROP_AND_NEXT))
+                builder.addAction(action("Queue ride", ACTION_MANUAL_RIDE))
+            }
+
+            else -> Unit
         }
 
-        ShiftState.PASSENGER -> {
-            builder.addAction(action("Drop off", ACTION_DROP_OFF))
-            builder.addAction(action("Drop + next", ACTION_DROP_AND_NEXT))
-            builder.addAction(action("Queue ride", ACTION_MANUAL_RIDE))
-        }
-
-        else -> Unit
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIFICATION_ID, builder.build())
     }
 
-    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-        .notify(NOTIFICATION_ID, builder.build())
-}
-
-    private fun notification(text: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-        .setContentTitle("MMIT Work Tracker")
-        .setContentText(text)
-        .setContentIntent(activityIntent())
-        .setOngoing(true)
-        .build()
+    private fun notification(text: String): Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("MMIT Work Tracker")
+            .setContentText(text)
+            .setContentIntent(activityIntent())
+            .setOngoing(true)
+            .build()
 
     private fun action(label: String, command: String): NotificationCompat.Action =
         NotificationCompat.Action.Builder(0, label, serviceIntent(command)).build()
@@ -186,11 +195,17 @@ class TrackingService : Service() {
     )
 
     private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "Active work tracking", NotificationManager.IMPORTANCE_LOW)
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Active work tracking",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(channel)
     }
 
-    private fun ShiftState.label(): String = name.lowercase().replace('_', ' ')
+    private fun ShiftState.label(): String =
+        name.lowercase().replace('_', ' ')
 
     companion object {
         const val ACTION_START = "tracker.START"
@@ -199,7 +214,6 @@ class TrackingService : Service() {
         const val ACTION_DROP_AND_NEXT = "tracker.DROP_AND_NEXT"
         const val ACTION_MANUAL_RIDE = "tracker.MANUAL_RIDE"
         const val ACTION_AUTO_RIDE = "tracker.AUTO_RIDE"
-        // NEW: cancel ride action
         const val ACTION_CANCEL_RIDE = "tracker.CANCEL_RIDE"
         private const val CHANNEL_ID = "active_tracking"
         private const val NOTIFICATION_ID = 41
