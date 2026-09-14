@@ -38,6 +38,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     val latestCompleted: StateFlow<ShiftEntity?> = repository.observeLatestCompletedShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val completedOutings: StateFlow<List<ShiftEntity>> = repository.observeCompletedShifts(500)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val message = MutableStateFlow<String?>(null)
 
     fun start(platform: Platform, queueMode: QueueMode, odometer: Double, firstRide: Boolean) = act {
@@ -101,6 +104,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
 
     fun exportLatest(onReady: (File) -> Unit) = act {
         val shift = latestCompleted.value ?: error("No completed outing to export.")
+        onReady(ShiftExporter(getApplication<Application>(), repository).export(shift.id))
+    }
+
+    fun exportShift(shift: ShiftEntity, onReady: (File) -> Unit) = act {
         onReady(ShiftExporter(getApplication<Application>(), repository).export(shift.id))
     }
 

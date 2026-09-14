@@ -43,6 +43,9 @@ interface TrackerDao {
     @Query("SELECT * FROM shifts WHERE state = 'COMPLETE' ORDER BY completedAtEpochMs DESC LIMIT 1")
     fun observeLatestCompletedShift(): Flow<ShiftEntity?>
 
+    @Query("SELECT * FROM shifts WHERE state = 'COMPLETE' ORDER BY completedAtEpochMs DESC LIMIT :limit")
+    fun observeCompletedShifts(limit: Int): Flow<List<ShiftEntity>>
+
     @Query("SELECT * FROM rides WHERE id = :rideId")
     suspend fun ride(rideId: String): RideEntity?
 

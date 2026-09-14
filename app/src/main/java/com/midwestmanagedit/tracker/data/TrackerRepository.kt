@@ -18,6 +18,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
     fun observeActiveShift(): Flow<ShiftEntity?> = dao.observeActiveShift()
     fun observeLatestCompletedShift(): Flow<ShiftEntity?> = dao.observeLatestCompletedShift()
     fun observePendingRides(shiftId: String): Flow<List<RideEntity>> = dao.observePendingRides(shiftId)
+    fun observeCompletedShifts(limit: Int): Flow<List<ShiftEntity>> = dao.observeCompletedShifts(limit)
 
     // ------------------------------------------------------------
     // NORMAL GIG SHIFT WORKFLOW

@@ -25,7 +25,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,7 +53,15 @@ import com.midwestmanagedit.tracker.domain.ShiftState
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { TrackerApp() } }
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme(
+                primary = Color(0xFF23D8D0),
+                secondary = Color(0xFF86A9FF),
+                background = Color(0xFF071B2E),
+                surface = Color(0xFF102A43),
+                surfaceVariant = Color(0xFF183754),
+            )) { Surface { TrackerApp() } }
+        }
     }
 }
 
@@ -58,7 +69,7 @@ class MainActivity : ComponentActivity() {
 private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
     val shift by vm.activeShift.collectAsState()
     val pending by vm.pendingRides.collectAsState()
-    val latest by vm.latestCompleted.collectAsState()
+    val completed by vm.completedOutings.collectAsState()
     val message by vm.message.collectAsState()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -83,6 +94,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("MMIT Work Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Your field and driving work center", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             Text("Offline-first • Rideshare + FieldNation • GPS saved locally")
             if (message != null) {
                 Card(Modifier.fillMaxWidth()) {
@@ -94,7 +106,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             }
             if (shift == null) {
                 StartShiftCard(vm)
-                latest?.let { LastOutingCard(it, vm) }
+                if (completed.isNotEmpty()) CompletedOutingsCard(completed, vm)
             } else ActiveShiftCard(shift!!, pending, vm)
         }
     }
@@ -295,36 +307,37 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
 }
 
 @Composable
-private fun LastOutingCard(shift: ShiftEntity, vm: TrackerViewModel) {
+private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewModel) {
     val context = LocalContext.current
-    val miles = shift.endOdometer?.minus(shift.startOdometer)
+    var showAll by remember { mutableStateOf(false) }
+    val displayed = if (showAll) outings else outings.take(3)
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Last completed outing", style = MaterialTheme.typography.titleLarge)
-            val label = if (shift.platform == Platform.FIELD_NATION.name) {
-                "FieldNation ${shift.workOrderNumber}"
-            } else {
-                shift.platform
-            }
-            Text("$label • ${miles?.let { "%.1f miles".format(it) } ?: "miles pending"}")
-            OutlinedButton(
-                onClick = {
-                    vm.exportLatest { file ->
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                        context.startActivity(
-                            Intent.createChooser(
-                                Intent(Intent.ACTION_SEND).apply {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(if (showAll) "All completed outings" else "Recent outings", style = MaterialTheme.typography.titleLarge)
+            Text("${outings.size} saved locally • export any outing when you are ready", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            displayed.forEach { shift ->
+                val miles = shift.endOdometer?.minus(shift.startOdometer)
+                val label = if (shift.platform == Platform.FIELD_NATION.name) "FieldNation ${shift.workOrderNumber}" else shift.platform.replace('_', ' ')
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(label, fontWeight = FontWeight.Bold, color = if (shift.platform == Platform.FIELD_NATION.name) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
+                        Text("${miles?.let { "%.1f miles".format(it) } ?: "miles pending"} • ${if (shift.roundTripExpected) "round trip" else "completed outing"}")
+                        OutlinedButton(onClick = {
+                            vm.exportShift(shift) { file ->
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                                     type = "application/json"
                                     putExtra(Intent.EXTRA_STREAM, uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                },
-                                "Export ride data",
-                            ),
-                        )
+                                }, "Export ${label} data"))
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Export JSON for OPS") }
                     }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Export JSON for OPS") }
+                }
+            }
+            if (outings.size > 3) TextButton(onClick = { showAll = !showAll }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showAll) "Show recent outings" else "Show all ${outings.size} outings")
+            }
         }
     }
 }
