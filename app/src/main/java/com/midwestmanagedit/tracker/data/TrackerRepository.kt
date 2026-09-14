@@ -85,6 +85,59 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(shift.id, ride.id, EventType.NEXT_PICKUP_STARTED, stamp)
     }
 
+    /** Records a newly accepted ride as the active pickup. */
+    suspend fun acceptRide(acquisitionMode: AcquisitionMode, stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift(ShiftState.AVAILABLE)
+        val ride = RideEntity(
+            id = UUID.randomUUID().toString(),
+            shiftId = shift.id,
+            sequence = dao.nextSequence(shift.id),
+            acquisitionMode = acquisitionMode.name,
+            state = RideState.EN_ROUTE_PICKUP.name,
+            queuedAtEpochMs = stamp.occurredAtEpochMs,
+            trackingStartedAtEpochMs = stamp.occurredAtEpochMs,
+        )
+
+        dao.insertRide(ride)
+        dao.updateShift(
+            shift.copy(
+                state = ShiftState.EN_ROUTE_PICKUP.name,
+                activeRideId = ride.id,
+            ),
+        )
+        event(
+            shift.id,
+            ride.id,
+            if (acquisitionMode == AcquisitionMode.AUTO_QUEUE) EventType.RIDE_AUTO_QUEUED else EventType.RIDE_ACCEPTED,
+            stamp,
+        )
+    }
+
+    /** Records an offer that was queued while another ride is active. */
+    suspend fun queueRide(acquisitionMode: AcquisitionMode, stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift()
+        check(shift.state in setOf(ShiftState.EN_ROUTE_PICKUP.name, ShiftState.PASSENGER.name)) {
+            "Queue another ride only while a ride is active."
+        }
+
+        val ride = RideEntity(
+            id = UUID.randomUUID().toString(),
+            shiftId = shift.id,
+            sequence = dao.nextSequence(shift.id),
+            acquisitionMode = acquisitionMode.name,
+            state = RideState.PENDING.name,
+            queuedAtEpochMs = stamp.occurredAtEpochMs,
+        )
+
+        dao.insertRide(ride)
+        event(
+            shift.id,
+            ride.id,
+            if (acquisitionMode == AcquisitionMode.AUTO_QUEUE) EventType.RIDE_AUTO_QUEUED else EventType.RIDE_ACCEPTED,
+            stamp,
+        )
+    }
+
     suspend fun dropoffPassenger(startNext: Boolean, stamp: GeoStamp) = database.withTransaction {
         val shift = requireShift(ShiftState.PASSENGER)
         val ride = requireRide(shift.activeRideId)
@@ -119,6 +172,21 @@ class TrackerRepository(private val database: TrackerDatabase) {
         val ride = dao.pendingRides(shift.id).firstOrNull() ?: error("No pending ride.")
         dao.updateRide(ride.copy(state = RideState.LOST.name))
         event(shift.id, ride.id, EventType.QUEUE_DISAPPEARED, stamp)
+    }
+
+    /** Cancels the active pre-pickup ride and returns the shift to availability. */
+    suspend fun cancelActiveRide(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift(ShiftState.EN_ROUTE_PICKUP)
+        val ride = requireRide(shift.activeRideId)
+
+        dao.updateRide(ride.copy(state = RideState.CANCELLED.name))
+        dao.updateShift(
+            shift.copy(
+                state = ShiftState.AVAILABLE.name,
+                activeRideId = null,
+            ),
+        )
+        event(shift.id, ride.id, EventType.RIDE_CANCELLED, stamp)
     }
 
     // ------------------------------------------------------------

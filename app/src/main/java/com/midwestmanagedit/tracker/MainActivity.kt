@@ -188,7 +188,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
     when (state) {
         ShiftState.AVAILABLE -> {
             if (pending.isEmpty()) {
-                BigButton("RIDE ACCEPTED — START PICKUP", { vm.queue(mode.acquisition()) })
+                BigButton("RIDE ACCEPTED — START PICKUP", { vm.acceptRide(mode.acquisition()) })
             } else {
                 BigButton("START QUEUED PICKUP", vm::startPending)
                 OutlinedButton(vm::losePending, Modifier.fillMaxWidth()) { Text("Queued ride disappeared") }
@@ -199,9 +199,25 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
             }
         }
         ShiftState.EN_ROUTE_PICKUP -> {
+            // Primary action: pick up passenger
             BigButton("PICKED UP PASSENGER", vm::pickup)
-            OutlinedButton({ vm.queue(mode.acquisition()) }, Modifier.fillMaxWidth()) {
-                Text(if (mode == QueueMode.AUTO) "Record auto-queued ride" else "Record accepted reserve")
+
+            // Secondary actions: record queued/accepted and cancel
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { vm.queueRide(mode.acquisition()) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (mode == QueueMode.AUTO) "Record auto-queued ride" else "Record accepted reserve")
+                }
+
+                OutlinedButton(
+                    onClick = { vm.cancelRide() },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
+                ) {
+                    Text("Ride Canceled")
+                }
             }
         }
         ShiftState.PASSENGER -> {
@@ -211,7 +227,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
                 OutlinedButton({ vm.dropOff(false) }, Modifier.fillMaxWidth()) { Text("Drop off only — verify queue") }
                 OutlinedButton(vm::losePending, Modifier.fillMaxWidth()) { Text("Queued ride disappeared") }
             }
-            OutlinedButton({ vm.queue(mode.acquisition()) }, Modifier.fillMaxWidth()) {
+            OutlinedButton({ vm.queueRide(mode.acquisition()) }, Modifier.fillMaxWidth()) {
                 Text(if (mode == QueueMode.AUTO) "Record auto-queued ride" else "Record accepted reserve")
             }
         }

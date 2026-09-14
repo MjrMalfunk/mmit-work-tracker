@@ -38,6 +38,21 @@ class TrackerReducerTest {
     }
 
     @Test
+    fun `canceling an active pickup returns to available and preserves queued rides`() {
+        val state = TrackerState(
+            shiftState = ShiftState.EN_ROUTE_PICKUP,
+            activeRideId = "ride-1",
+            pendingRideIds = listOf("ride-2"),
+        )
+
+        val cancelled = TrackerReducer.reduce(state, TrackerCommand.CancelActiveRide)
+
+        assertEquals(ShiftState.AVAILABLE, cancelled.shiftState)
+        assertNull(cancelled.activeRideId)
+        assertEquals(listOf("ride-2"), cancelled.pendingRideIds)
+    }
+
+    @Test
     fun `queue mode can change during one shift`() {
         val manual = TrackerReducer.reduce(TrackerState(), TrackerCommand.StartShift())
         val auto = TrackerReducer.reduce(manual, TrackerCommand.ChangeQueueMode(QueueMode.AUTO))

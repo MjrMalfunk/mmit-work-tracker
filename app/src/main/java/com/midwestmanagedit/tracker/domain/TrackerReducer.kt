@@ -56,6 +56,14 @@ object TrackerReducer {
             )
         }
 
+        TrackerCommand.CancelActiveRide -> {
+            requireState(state, ShiftState.EN_ROUTE_PICKUP)
+            state.copy(
+                shiftState = ShiftState.AVAILABLE,
+                activeRideId = null,
+            )
+        }
+
         is TrackerCommand.LosePendingRide -> {
             if (command.rideId !in state.pendingRideIds) {
                 throw InvalidTransition("Pending ride does not exist.")

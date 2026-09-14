@@ -23,6 +23,7 @@ import com.midwestmanagedit.tracker.MainActivity
 import com.midwestmanagedit.tracker.R
 import com.midwestmanagedit.tracker.TrackerApplication
 import com.midwestmanagedit.tracker.data.LocationPointEntity
+import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.ShiftState
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +68,7 @@ class TrackingService : Service() {
             runCatching {
                 when (intent?.action) {
                     ACTION_PICKUP ->
-                        repository.startOldestPending(stamp)
+                        repository.pickupPassenger(stamp)
 
                     ACTION_DROP_OFF ->
                         repository.dropoffPassenger(startNext = false, stamp)
@@ -75,14 +76,14 @@ class TrackingService : Service() {
                     ACTION_DROP_AND_NEXT ->
                         repository.dropoffPassenger(startNext = true, stamp)
 
-                    ACTION_MANUAL_RIDE ->
-                        repository.startOldestPending(stamp)
+                    ACTION_ACCEPT_RIDE ->
+                        repository.acceptRide(AcquisitionMode.MANUAL_ACCEPT, stamp)
 
-                    ACTION_AUTO_RIDE ->
-                        repository.startOldestPending(stamp)
+                    ACTION_QUEUE_RIDE ->
+                        repository.queueRide(AcquisitionMode.MANUAL_ACCEPT, stamp)
 
                     ACTION_CANCEL_RIDE ->
-                        repository.loseOldestPending(stamp)
+                        repository.cancelActiveRide(stamp)
                 }
             }
             refreshNotification()
@@ -148,7 +149,7 @@ class TrackingService : Service() {
 
         when (state) {
             ShiftState.AVAILABLE ->
-                builder.addAction(action("Ride accepted", ACTION_MANUAL_RIDE))
+                builder.addAction(action("Ride accepted", ACTION_ACCEPT_RIDE))
 
             ShiftState.EN_ROUTE_PICKUP -> {
                 builder.addAction(action("Cancel ride", ACTION_CANCEL_RIDE))
@@ -158,7 +159,7 @@ class TrackingService : Service() {
             ShiftState.PASSENGER -> {
                 builder.addAction(action("Drop off", ACTION_DROP_OFF))
                 builder.addAction(action("Drop + next", ACTION_DROP_AND_NEXT))
-                builder.addAction(action("Queue ride", ACTION_MANUAL_RIDE))
+                builder.addAction(action("Queue ride", ACTION_QUEUE_RIDE))
             }
 
             else -> Unit
@@ -212,8 +213,8 @@ class TrackingService : Service() {
         const val ACTION_PICKUP = "tracker.PICKUP"
         const val ACTION_DROP_OFF = "tracker.DROP_OFF"
         const val ACTION_DROP_AND_NEXT = "tracker.DROP_AND_NEXT"
-        const val ACTION_MANUAL_RIDE = "tracker.MANUAL_RIDE"
-        const val ACTION_AUTO_RIDE = "tracker.AUTO_RIDE"
+        const val ACTION_ACCEPT_RIDE = "tracker.ACCEPT_RIDE"
+        const val ACTION_QUEUE_RIDE = "tracker.QUEUE_RIDE"
         const val ACTION_CANCEL_RIDE = "tracker.CANCEL_RIDE"
         private const val CHANNEL_ID = "active_tracking"
         private const val NOTIFICATION_ID = 41

@@ -76,6 +76,7 @@ sealed interface TrackerCommand {
     data class StartPendingRide(val rideId: String) : TrackerCommand
     data object Pickup : TrackerCommand
     data class DropOff(val startNextRideId: String? = null) : TrackerCommand
+    data object CancelActiveRide : TrackerCommand
     data class LosePendingRide(val rideId: String) : TrackerCommand
     data class ChangeQueueMode(val mode: QueueMode) : TrackerCommand
     data object StartBreak : TrackerCommand

@@ -57,10 +57,12 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun fieldCompleteWork() = act { repository.fieldCompleteWork(LocationMemory.stamp()) }
     fun fieldCheckOut() = act { repository.fieldCheckOut(LocationMemory.stamp()) }
 
-    // OLD: queue(mode) used acceptOrQueueRide — removed in new repo
-    fun queue(mode: AcquisitionMode) = act {
-        // Manual accept or auto queue both map to "startOldestPending"
-        repository.startOldestPending(LocationMemory.stamp())
+    fun acceptRide(mode: AcquisitionMode) = act {
+        repository.acceptRide(mode, LocationMemory.stamp())
+    }
+
+    fun queueRide(mode: AcquisitionMode) = act {
+        repository.queueRide(mode, LocationMemory.stamp())
     }
 
     // OLD: pickup() — removed in new repo
@@ -76,9 +78,8 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun startPending() = act { repository.startOldestPending(LocationMemory.stamp()) }
     fun losePending() = act { repository.loseOldestPending(LocationMemory.stamp()) }
 
-    // OLD: cancelActiveRide() — removed in new repo
     fun cancelRide() = act {
-        repository.loseOldestPending(LocationMemory.stamp())
+        repository.cancelActiveRide(LocationMemory.stamp())
     }
 
     // OLD: changeQueueMode() — removed in new repo
