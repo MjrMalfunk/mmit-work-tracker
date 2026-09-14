@@ -252,6 +252,21 @@ class TrackerRepository(private val database: TrackerDatabase) {
         return shift
     }
 
+    suspend fun pickupPassenger(stamp: GeoStamp) = database.withTransaction {
+    val shift = requireShift(ShiftState.EN_ROUTE_PICKUP)
+    val ride = requireRide(shift.activeRideId)
+
+    dao.updateRide(
+        ride.copy(
+            state = RideState.PASSENGER.name,
+            pickupAtEpochMs = stamp.occurredAtEpochMs,
+        ),
+    )
+
+    dao.updateShift(shift.copy(state = ShiftState.PASSENGER.name))
+    event(shift.id, ride.id, EventType.PASSENGER_PICKED_UP, stamp)
+}
+
     private suspend fun event(
         shiftId: String,
         rideId: String?,

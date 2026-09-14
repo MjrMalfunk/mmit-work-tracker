@@ -65,8 +65,8 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
 
     // OLD: pickup() — removed in new repo
     fun pickup() = act {
-        repository.startOldestPending(LocationMemory.stamp())
-    }
+    repository.pickupPassenger(LocationMemory.stamp())
+}
 
     // OLD: dropOff(startNext) — removed in new repo
     fun dropOff(startNext: Boolean) = act {
