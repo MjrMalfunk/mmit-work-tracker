@@ -18,6 +18,10 @@ class TrackerRepository(private val database: TrackerDatabase) {
     fun observeLatestCompletedShift(): Flow<ShiftEntity?> = dao.observeLatestCompletedShift()
     fun observePendingRides(shiftId: String): Flow<List<RideEntity>> = dao.observePendingRides(shiftId)
 
+    // ------------------------------------------------------------
+    // NORMAL GIG SHIFT WORKFLOW
+    // ------------------------------------------------------------
+
     suspend fun startShift(
         platform: Platform,
         queueMode: QueueMode,
@@ -52,11 +56,10 @@ class TrackerRepository(private val database: TrackerDatabase) {
                     id = rideId,
                     shiftId = shiftId,
                     sequence = 1,
-                    acquisitionMode = if (queueMode == QueueMode.AUTO) {
+                    acquisitionMode = if (queueMode == QueueMode.AUTO)
                         AcquisitionMode.AUTO_QUEUE.name
-                    } else {
-                        AcquisitionMode.MANUAL_ACCEPT.name
-                    },
+                    else
+                        AcquisitionMode.MANUAL_ACCEPT.name,
                     state = RideState.EN_ROUTE_PICKUP.name,
                     queuedAtEpochMs = stamp.occurredAtEpochMs,
                     trackingStartedAtEpochMs = stamp.occurredAtEpochMs,
@@ -119,17 +122,116 @@ class TrackerRepository(private val database: TrackerDatabase) {
     }
 
     // ------------------------------------------------------------
-    // REQUIRED BY ShiftExporter.kt
+    // FIELD NATION WORKFLOW (NO RIDES)
     // ------------------------------------------------------------
 
-    suspend fun shiftWithRides(shiftId: String): ShiftWithRides? =
-        dao.shiftWithRides(shiftId)
+    suspend fun startFieldNation(
+        workOrderNumber: String,
+        roundTrip: Boolean,
+        startOdometer: Double,
+        stamp: GeoStamp,
+    ) = database.withTransaction {
+        check(dao.activeShift() == null) { "Finish the existing shift first." }
 
-    suspend fun events(shiftId: String): List<TrackingEventEntity> =
-        dao.events(shiftId)
+        val shiftId = UUID.randomUUID().toString()
 
-    suspend fun locations(shiftId: String): List<LocationPointEntity> =
-        dao.locations(shiftId)
+        dao.insertShift(
+            ShiftEntity(
+                id = shiftId,
+                platform = Platform.FIELD_NATION.name,
+                state = ShiftState.EN_ROUTE_SITE.name,
+                queueMode = QueueMode.MANUAL.name,
+                startedAtEpochMs = stamp.occurredAtEpochMs,
+                startOdometer = startOdometer,
+                workOrderNumber = workOrderNumber,
+                roundTripExpected = roundTrip,
+                createdAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
+
+        event(shiftId, null, EventType.FN_TRIP_STARTED, stamp)
+    }
+
+    suspend fun fieldArriveSite(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireFieldShift(ShiftState.EN_ROUTE_SITE)
+        dao.updateShift(shift.copy(state = ShiftState.ON_SITE.name))
+        event(shift.id, null, EventType.FN_ARRIVED_SITE, stamp)
+    }
+
+    suspend fun fieldStartWork(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireFieldShift(ShiftState.ON_SITE)
+        dao.updateShift(shift.copy(state = ShiftState.WORKING.name))
+        event(shift.id, null, EventType.FN_CHECKED_IN, stamp)
+    }
+
+    suspend fun fieldCompleteWork(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireFieldShift(ShiftState.WORKING)
+        dao.updateShift(shift.copy(state = ShiftState.WRAP_UP.name))
+        event(shift.id, null, EventType.FN_WORK_COMPLETED, stamp)
+    }
+
+    suspend fun fieldCheckOut(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireFieldShift(ShiftState.WRAP_UP)
+        dao.updateShift(shift.copy(state = ShiftState.RETURNING_HOME.name))
+        event(shift.id, null, EventType.FN_CHECKED_OUT, stamp)
+    }
+
+    // ------------------------------------------------------------
+    // BREAK / END SHIFT / ARRIVE HOME (shared)
+    // ------------------------------------------------------------
+
+    suspend fun setBreak(start: Boolean, stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift()
+        if (start) {
+            check(shift.state == ShiftState.AVAILABLE.name) { "Finish the active ride first." }
+            dao.updateShift(shift.copy(state = ShiftState.BREAK.name))
+            event(shift.id, null, EventType.BREAK_STARTED, stamp)
+        } else {
+            check(shift.state == ShiftState.BREAK.name) { "Shift is not on break." }
+            dao.updateShift(shift.copy(state = ShiftState.AVAILABLE.name))
+            event(shift.id, null, EventType.BREAK_ENDED, stamp)
+        }
+    }
+
+    suspend fun endShift(stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift()
+        check(shift.activeRideId == null) { "Finish the active ride first." }
+        check(dao.pendingRides(shift.id).isEmpty()) { "Resolve pending rides first." }
+
+        dao.updateShift(
+            shift.copy(
+                state = ShiftState.RETURNING_HOME.name,
+                endedAtEpochMs = stamp.occurredAtEpochMs,
+            ),
+        )
+
+        event(shift.id, null, EventType.SHIFT_ENDED, stamp)
+    }
+
+    suspend fun arriveHome(shiftId: String, odometer: Double, stamp: GeoStamp) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Shift not found.")
+        check(shift.state == ShiftState.RETURNING_HOME.name)
+        check(odometer >= shift.startOdometer) { "Ending odometer cannot precede starting odometer." }
+
+        dao.updateShift(
+            shift.copy(
+                state = ShiftState.COMPLETE.name,
+                homeArrivedAtEpochMs = stamp.occurredAtEpochMs,
+                endOdometer = odometer,
+                completedAtEpochMs = stamp.occurredAtEpochMs,
+            ),
+        )
+
+        event(shift.id, null, EventType.HOME_ARRIVED, stamp)
+    }
+
+    // ------------------------------------------------------------
+    // EXPORTER SUPPORT
+    // ------------------------------------------------------------
+
+    suspend fun shiftWithRides(id: String) = dao.shiftWithRides(id)
+    suspend fun events(id: String) = dao.events(id)
+    suspend fun locations(id: String) = dao.locations(id)
 
     // ------------------------------------------------------------
     // INTERNAL HELPERS
@@ -137,7 +239,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
 
     suspend fun requireShift(required: ShiftState? = null): ShiftEntity {
         val shift = dao.activeShift() ?: error("No active shift.")
-        if (required != null) check(shift.state == required.name) { "Shift must be $required." }
+        if (required != null) check(shift.state == required.name) { "Expected ${required.name}; found ${shift.state}." }
         return shift
     }
 
@@ -150,10 +252,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
         return shift
     }
 
-    private fun jsonEscape(value: String): String =
-        value.replace("\\", "\\\\").replace("\"", "\\\"")
-
-    suspend fun event(
+    private suspend fun event(
         shiftId: String,
         rideId: String?,
         type: EventType,
