@@ -10,6 +10,7 @@ import com.midwestmanagedit.tracker.domain.RideState
 import com.midwestmanagedit.tracker.domain.ShiftState
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import org.json.JSONObject
 
 class TrackerRepository(private val database: TrackerDatabase) {
     val dao = database.trackerDao()
@@ -217,6 +218,16 @@ class TrackerRepository(private val database: TrackerDatabase) {
             ),
         )
 
+        event(
+            shiftId,
+            null,
+            EventType.SHIFT_STARTED,
+            stamp,
+            JSONObject()
+                .put("workOrderNumber", workOrderNumber)
+                .put("roundTripExpected", roundTrip)
+                .toString(),
+        )
         event(shiftId, null, EventType.FN_TRIP_STARTED, stamp)
     }
 
@@ -242,6 +253,9 @@ class TrackerRepository(private val database: TrackerDatabase) {
         val shift = requireFieldShift(ShiftState.WRAP_UP)
         dao.updateShift(shift.copy(state = ShiftState.RETURNING_HOME.name))
         event(shift.id, null, EventType.FN_CHECKED_OUT, stamp)
+        if (shift.roundTripExpected) {
+            event(shift.id, null, EventType.FN_RETURN_STARTED, stamp)
+        }
     }
 
     // ------------------------------------------------------------
@@ -290,7 +304,12 @@ class TrackerRepository(private val database: TrackerDatabase) {
             ),
         )
 
-        event(shift.id, null, EventType.HOME_ARRIVED, stamp)
+        val completionEvent = if (shift.platform == Platform.FIELD_NATION.name) {
+            if (shift.roundTripExpected) EventType.FN_RETURN_COMPLETED else EventType.OUTING_COMPLETED
+        } else {
+            EventType.HOME_ARRIVED
+        }
+        event(shift.id, null, completionEvent, stamp)
     }
 
     // ------------------------------------------------------------
