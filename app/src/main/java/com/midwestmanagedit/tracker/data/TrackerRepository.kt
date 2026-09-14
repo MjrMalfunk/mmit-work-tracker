@@ -251,7 +251,12 @@ class TrackerRepository(private val database: TrackerDatabase) {
 
     suspend fun fieldCheckOut(stamp: GeoStamp) = database.withTransaction {
         val shift = requireFieldShift(ShiftState.WRAP_UP)
-        dao.updateShift(shift.copy(state = ShiftState.RETURNING_HOME.name))
+        dao.updateShift(
+            shift.copy(
+                state = ShiftState.RETURNING_HOME.name,
+                endedAtEpochMs = stamp.occurredAtEpochMs,
+            ),
+        )
         event(shift.id, null, EventType.FN_CHECKED_OUT, stamp)
         if (shift.roundTripExpected) {
             event(shift.id, null, EventType.FN_RETURN_STARTED, stamp)
