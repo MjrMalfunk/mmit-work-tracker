@@ -331,6 +331,26 @@ class TrackerRepository(private val database: TrackerDatabase) {
         dao.updateShift(shift.copy(startOdometer = odometer))
     }
 
+    /** Correct a mistyped FieldNation work-order number before completion. */
+    suspend fun correctFieldNationWorkOrder(shiftId: String, workOrderNumber: String) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Shift not found.")
+        check(shift.platform == Platform.FIELD_NATION.name && shift.state == ShiftState.RETURNING_HOME.name) {
+            "Work-order number can only be corrected on an active FieldNation return."
+        }
+        val corrected = workOrderNumber.trim()
+        check(corrected.isNotEmpty() && corrected.length <= 120 && !corrected.contains('\u0000')) {
+            "Enter a valid FieldNation work-order number."
+        }
+        dao.updateShift(shift.copy(workOrderNumber = corrected))
+        dao.updateShiftStartedPayload(
+            shiftId,
+            JSONObject()
+                .put("workOrderNumber", corrected)
+                .put("roundTripExpected", shift.roundTripExpected)
+                .toString(),
+        )
+    }
+
     // ------------------------------------------------------------
     // EXPORTER SUPPORT
     // ------------------------------------------------------------

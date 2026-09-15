@@ -105,6 +105,11 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         repository.correctStartingOdometer(shift.id, odometer)
     }
 
+    fun correctFieldNationWorkOrder(workOrderNumber: String) = act {
+        val shift = activeShift.value ?: error("No outing to correct.")
+        repository.correctFieldNationWorkOrder(shift.id, workOrderNumber)
+    }
+
     fun clearMessage() { message.value = null }
 
     fun exportLatest(onReady: (File) -> Unit) = act {

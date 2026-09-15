@@ -273,6 +273,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
 private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: TrackerViewModel) {
     var endingOdometer by remember { mutableStateOf("") }
     var startingOdometerCorrection by remember { mutableStateOf("") }
+    var workOrderNumberCorrection by remember { mutableStateOf("") }
     Text("Work order ${shift.workOrderNumber}", fontWeight = FontWeight.Bold)
     Text(if (shift.roundTripExpected) "Round trip expected" else "One-way / continuing elsewhere")
     when (state) {
@@ -298,6 +299,19 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
                 label = { Text(if (shift.roundTripExpected) "Odometer at return" else "Final odometer") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+            )
+            Text("Work order currently recorded: ${shift.workOrderNumber}")
+            OutlinedTextField(
+                value = workOrderNumberCorrection,
+                onValueChange = { workOrderNumberCorrection = it.trimStart() },
+                label = { Text("Correct FieldNation work-order number (if needed)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            BigButton(
+                "SAVE CORRECTED WORK-ORDER NUMBER",
+                { vm.correctFieldNationWorkOrder(workOrderNumberCorrection) },
+                workOrderNumberCorrection.isNotBlank(),
             )
             val endingValue = endingOdometer.toDoubleOrNull()
             if (endingValue != null && endingValue < shift.startOdometer) {

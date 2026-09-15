@@ -65,6 +65,9 @@ interface TrackerDao {
     @Query("SELECT * FROM tracking_events WHERE shiftId = :shiftId ORDER BY occurredAtEpochMs, rowid")
     suspend fun events(shiftId: String): List<TrackingEventEntity>
 
+    @Query("UPDATE tracking_events SET payloadJson = :payloadJson WHERE shiftId = :shiftId AND type = 'SHIFT_STARTED'")
+    suspend fun updateShiftStartedPayload(shiftId: String, payloadJson: String)
+
     @Query("SELECT * FROM location_points WHERE shiftId = :shiftId ORDER BY occurredAtEpochMs, id")
     suspend fun locations(shiftId: String): List<LocationPointEntity>
 }
