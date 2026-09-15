@@ -301,16 +301,15 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(shift.id, null, EventType.SHIFT_ENDED, stamp)
     }
 
-    suspend fun arriveHome(shiftId: String, odometer: Double, stamp: GeoStamp) = database.withTransaction {
+    /** Locks the real arrival time and stops the route before any odometer correction is needed. */
+    suspend fun lockHomeArrival(shiftId: String, stamp: GeoStamp) = database.withTransaction {
         val shift = dao.shift(shiftId) ?: error("Shift not found.")
         check(shift.state == ShiftState.RETURNING_HOME.name)
-        check(odometer >= shift.startOdometer) { "Ending odometer cannot precede starting odometer." }
+        check(shift.homeArrivedAtEpochMs == null) { "Arrival time is already locked." }
 
         dao.updateShift(
             shift.copy(
-                state = ShiftState.COMPLETE.name,
                 homeArrivedAtEpochMs = stamp.occurredAtEpochMs,
-                endOdometer = odometer,
                 completedAtEpochMs = stamp.occurredAtEpochMs,
             ),
         )
@@ -321,6 +320,16 @@ class TrackerRepository(private val database: TrackerDatabase) {
             EventType.HOME_ARRIVED
         }
         event(shift.id, null, completionEvent, stamp)
+    }
+
+    /** Completes the already-arrived outing without changing its locked arrival timestamp. */
+    suspend fun finishHomeArrival(shiftId: String, odometer: Double) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Shift not found.")
+        check(shift.state == ShiftState.RETURNING_HOME.name && shift.homeArrivedAtEpochMs != null) {
+            "Lock your arrival time before entering the final odometer."
+        }
+        check(odometer >= shift.startOdometer) { "Ending odometer cannot precede starting odometer." }
+        dao.updateShift(shift.copy(state = ShiftState.COMPLETE.name, endOdometer = odometer))
     }
 
     /** Correct a mistyped odometer before the still-active outing is completed. */

@@ -247,18 +247,23 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
         }
         ShiftState.BREAK -> BigButton("RESUME", { vm.breakMode(false) })
         ShiftState.RETURNING_HOME -> {
-            Text("GPS is still recording the deadhead trip home.", fontWeight = FontWeight.Bold)
-            OutlinedTextField(
-                value = endingOdometer,
-                onValueChange = { endingOdometer = it.filter { c -> c.isDigit() || c == '.' } },
-                label = { Text("Odometer at home") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            BigButton(
-                "ARRIVED HOME — COMPLETE",
-                { endingOdometer.toDoubleOrNull()?.let(vm::arriveHome) },
-                endingOdometer.toDoubleOrNull()?.let { it >= shift.startOdometer } == true,
-            )
+            if (shift.homeArrivedAtEpochMs == null) {
+                Text("GPS is recording the deadhead trip home. Tap this as soon as you arrive; you can enter the odometer afterward.", fontWeight = FontWeight.Bold)
+                BigButton("ARRIVED HOME — LOCK TIME", vm::lockHomeArrival)
+            } else {
+                Text("Arrival time is locked and GPS has stopped. Enter the odometer when you are ready.", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = endingOdometer,
+                    onValueChange = { endingOdometer = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Odometer at home") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                BigButton(
+                    "SAVE FINAL ODOMETER — COMPLETE",
+                    { endingOdometer.toDoubleOrNull()?.let(vm::finishHomeArrival) },
+                    endingOdometer.toDoubleOrNull()?.let { it >= shift.startOdometer } == true,
+                )
+            }
         }
         ShiftState.IDLE,
         ShiftState.COMPLETE,
@@ -285,14 +290,16 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
             vm::fieldCheckOut,
         )
         ShiftState.RETURNING_HOME -> {
-            Text(
-                if (shift.roundTripExpected) {
-                    "Return GPS is recording. Enter the odometer before leaving the vehicle."
-                } else {
-                    "Enter the final odometer to complete this work outing."
-                },
-                fontWeight = FontWeight.Bold,
-            )
+            if (shift.homeArrivedAtEpochMs == null) {
+                Text(
+                    if (shift.roundTripExpected) "Return GPS is recording. Tap as soon as you arrive; you can correct numbers afterward."
+                    else "Tap when the outing ends; you can enter the final odometer afterward.",
+                    fontWeight = FontWeight.Bold,
+                )
+                BigButton("ARRIVED HOME — LOCK TIME", vm::lockHomeArrival)
+                return
+            }
+            Text("Arrival time is locked and GPS has stopped. Review or correct the numbers below, then complete the outing.", fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = endingOdometer,
                 onValueChange = { endingOdometer = it.filter { c -> c.isDigit() || c == '.' } },
@@ -333,8 +340,8 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
                 )
             }
             BigButton(
-                if (shift.roundTripExpected) "RETURN COMPLETE" else "COMPLETE OUTING",
-                { endingOdometer.toDoubleOrNull()?.let(vm::arriveHome) },
+                if (shift.roundTripExpected) "SAVE FINAL ODOMETER — COMPLETE" else "SAVE FINAL ODOMETER — COMPLETE",
+                { endingOdometer.toDoubleOrNull()?.let(vm::finishHomeArrival) },
                 endingValue?.let { it >= shift.startOdometer } == true,
             )
         }

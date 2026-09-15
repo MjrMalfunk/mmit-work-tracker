@@ -94,10 +94,15 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun breakMode(start: Boolean) = act { repository.setBreak(start, LocationMemory.stamp()) }
     fun endShift() = act { repository.endShift(LocationMemory.stamp()) }
 
-    fun arriveHome(odometer: Double) = act {
+    fun lockHomeArrival() = act {
         val shift = activeShift.value ?: error("No outing to finish.")
-        repository.arriveHome(shift.id, odometer, LocationMemory.stamp())
+        repository.lockHomeArrival(shift.id, LocationMemory.stamp())
         getApplication<Application>().stopService(Intent(getApplication(), TrackingService::class.java))
+    }
+
+    fun finishHomeArrival(odometer: Double) = act {
+        val shift = activeShift.value ?: error("No outing to finish.")
+        repository.finishHomeArrival(shift.id, odometer)
     }
 
     fun correctStartingOdometer(odometer: Double) = act {
