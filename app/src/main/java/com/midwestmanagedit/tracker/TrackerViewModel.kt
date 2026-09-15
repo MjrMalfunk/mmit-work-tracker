@@ -100,6 +100,11 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         getApplication<Application>().stopService(Intent(getApplication(), TrackingService::class.java))
     }
 
+    fun correctStartingOdometer(odometer: Double) = act {
+        val shift = activeShift.value ?: error("No outing to correct.")
+        repository.correctStartingOdometer(shift.id, odometer)
+    }
+
     fun clearMessage() { message.value = null }
 
     fun exportLatest(onReady: (File) -> Unit) = act {

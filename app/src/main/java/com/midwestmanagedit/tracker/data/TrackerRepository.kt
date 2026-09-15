@@ -323,6 +323,14 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(shift.id, null, completionEvent, stamp)
     }
 
+    /** Correct a mistyped odometer before the still-active outing is completed. */
+    suspend fun correctStartingOdometer(shiftId: String, odometer: Double) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Shift not found.")
+        check(shift.state == ShiftState.RETURNING_HOME.name) { "Starting odometer can only be corrected while returning home." }
+        check(odometer >= 0 && odometer <= 9_999_999) { "Enter a valid starting odometer." }
+        dao.updateShift(shift.copy(startOdometer = odometer))
+    }
+
     // ------------------------------------------------------------
     // EXPORTER SUPPORT
     // ------------------------------------------------------------

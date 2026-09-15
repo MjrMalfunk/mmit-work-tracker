@@ -272,6 +272,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
 @Composable
 private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: TrackerViewModel) {
     var endingOdometer by remember { mutableStateOf("") }
+    var startingOdometerCorrection by remember { mutableStateOf("") }
     Text("Work order ${shift.workOrderNumber}", fontWeight = FontWeight.Bold)
     Text(if (shift.roundTripExpected) "Round trip expected" else "One-way / continuing elsewhere")
     when (state) {
@@ -298,10 +299,29 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
+            val endingValue = endingOdometer.toDoubleOrNull()
+            if (endingValue != null && endingValue < shift.startOdometer) {
+                Text(
+                    "The saved starting odometer (${shift.startOdometer}) is higher than this return reading. Correct the starting reading before completing this outing.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                OutlinedTextField(
+                    value = startingOdometerCorrection,
+                    onValueChange = { startingOdometerCorrection = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Correct starting odometer") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                BigButton(
+                    "SAVE CORRECTED STARTING ODOMETER",
+                    { startingOdometerCorrection.toDoubleOrNull()?.let(vm::correctStartingOdometer) },
+                    startingOdometerCorrection.toDoubleOrNull()?.let { it <= endingValue } == true,
+                )
+            }
             BigButton(
                 if (shift.roundTripExpected) "RETURN COMPLETE" else "COMPLETE OUTING",
                 { endingOdometer.toDoubleOrNull()?.let(vm::arriveHome) },
-                endingOdometer.toDoubleOrNull()?.let { it >= shift.startOdometer } == true,
+                endingValue?.let { it >= shift.startOdometer } == true,
             )
         }
         else -> Unit
