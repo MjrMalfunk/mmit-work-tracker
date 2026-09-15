@@ -37,6 +37,7 @@ class ShiftExporter(
                 put("wentOfflineAtEpochMs", bundle.shift.endedAtEpochMs)
                 put("homeArrivedAtEpochMs", bundle.shift.homeArrivedAtEpochMs)
                 put("completedAtEpochMs", bundle.shift.completedAtEpochMs)
+                if (!bundle.shift.closingNote.isNullOrBlank()) put("closingNote", bundle.shift.closingNote)
                 put("startOdometer", bundle.shift.startOdometer)
                 put("endOdometer", bundle.shift.endOdometer)
             })

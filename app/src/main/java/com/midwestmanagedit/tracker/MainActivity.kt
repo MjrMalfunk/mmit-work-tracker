@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.content.Intent
+import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -34,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -310,6 +312,14 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
 private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewModel) {
     val context = LocalContext.current
     var showAll by remember { mutableStateOf(false) }
+    var dictatingShiftId by remember { mutableStateOf<String?>(null) }
+    val noteDrafts = remember { mutableStateMapOf<String, String>() }
+    val dictate = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        val shiftId = dictatingShiftId
+        if (spoken != null && shiftId != null) noteDrafts[shiftId] = spoken
+        dictatingShiftId = null
+    }
     val displayed = if (showAll) outings else outings.take(3)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -322,6 +332,24 @@ private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewMode
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(label, fontWeight = FontWeight.Bold, color = if (shift.platform == Platform.FIELD_NATION.name) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
                         Text("${miles?.let { "%.1f miles".format(it) } ?: "miles pending"} • ${if (shift.roundTripExpected) "round trip" else "completed outing"}")
+                        val note = noteDrafts[shift.id] ?: shift.closingNote.orEmpty()
+                        OutlinedTextField(
+                            value = note,
+                            onValueChange = { noteDrafts[shift.id] = it },
+                            label = { Text("Closing notes (optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                dictatingShiftId = shift.id
+                                dictate.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Dictate closing notes")
+                                })
+                            }, modifier = Modifier.weight(1f)) { Text("Dictate note") }
+                            OutlinedButton(onClick = { vm.saveClosingNote(shift, note) }, modifier = Modifier.weight(1f)) { Text("Save note") }
+                        }
                         OutlinedButton(onClick = {
                             vm.exportShift(shift) { file ->
                                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)

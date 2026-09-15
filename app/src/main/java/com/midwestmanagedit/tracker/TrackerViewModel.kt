@@ -111,6 +111,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         onReady(ShiftExporter(getApplication<Application>(), repository).export(shift.id))
     }
 
+    fun saveClosingNote(shift: ShiftEntity, note: String) = act {
+        repository.saveClosingNote(shift.id, note)
+    }
+
     private fun act(block: suspend () -> Unit) {
         viewModelScope.launch {
             runCatching { block() }

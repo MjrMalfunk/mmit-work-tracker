@@ -20,6 +20,11 @@ class TrackerRepository(private val database: TrackerDatabase) {
     fun observePendingRides(shiftId: String): Flow<List<RideEntity>> = dao.observePendingRides(shiftId)
     fun observeCompletedShifts(limit: Int): Flow<List<ShiftEntity>> = dao.observeCompletedShifts(limit)
 
+    suspend fun saveClosingNote(shiftId: String, note: String) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Outing not found.")
+        dao.updateShift(shift.copy(closingNote = note.trim().ifBlank { null }))
+    }
+
     // ------------------------------------------------------------
     // NORMAL GIG SHIFT WORKFLOW
     // ------------------------------------------------------------

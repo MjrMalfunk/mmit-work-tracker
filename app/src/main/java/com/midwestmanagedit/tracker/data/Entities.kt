@@ -20,6 +20,7 @@ data class ShiftEntity(
     val workOrderNumber: String? = null,
     @ColumnInfo(defaultValue = "0") val roundTripExpected: Boolean = false,
     val completedAtEpochMs: Long? = null,
+    val closingNote: String? = null,
     val createdAtEpochMs: Long,
 )
 
