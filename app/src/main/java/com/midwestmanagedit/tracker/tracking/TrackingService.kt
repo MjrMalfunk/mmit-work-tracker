@@ -118,6 +118,8 @@ class TrackingService : Service() {
 
         scope.launch {
             val shift = repository.dao.activeShift() ?: return@launch
+            // A queued callback must not append travel after the driver locked arrival.
+            if (shift.homeArrivedAtEpochMs != null || location.time < shift.startedAtEpochMs) return@launch
 
             repository.dao.insertLocation(
                 LocationPointEntity(

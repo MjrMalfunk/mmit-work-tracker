@@ -94,6 +94,14 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun breakMode(start: Boolean) = act { repository.setBreak(start, LocationMemory.stamp()) }
     fun endShift() = act { repository.endShift(LocationMemory.stamp()) }
 
+    fun saveOfflineOdometer(odometer: Double) = act {
+        repository.saveOfflineOdometer(activeShift.value?.id ?: error("No active outing."), odometer)
+    }
+
+    fun correctHomeArrival(minutesLate: Double) = act {
+        repository.correctHomeArrival(activeShift.value?.id ?: error("No active outing."), minutesLate)
+    }
+
     fun lockHomeArrival() = act {
         val shift = activeShift.value ?: error("No outing to finish.")
         repository.lockHomeArrival(shift.id, LocationMemory.stamp())

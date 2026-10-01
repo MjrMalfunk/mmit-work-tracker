@@ -1,6 +1,7 @@
 package com.midwestmanagedit.tracker.data
 
 import androidx.room.withTransaction
+import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.EventType
 import com.midwestmanagedit.tracker.domain.GeoStamp
@@ -288,6 +289,9 @@ class TrackerRepository(private val database: TrackerDatabase) {
 
     suspend fun endShift(stamp: GeoStamp) = database.withTransaction {
         val shift = requireShift()
+        check(shift.platform != Platform.FIELD_NATION.name && shift.state == ShiftState.AVAILABLE.name) {
+            "Go offline only while available."
+        }
         check(shift.activeRideId == null) { "Finish the active ride first." }
         check(dao.pendingRides(shift.id).isEmpty()) { "Resolve pending rides first." }
 
@@ -328,8 +332,30 @@ class TrackerRepository(private val database: TrackerDatabase) {
         check(shift.state == ShiftState.RETURNING_HOME.name && shift.homeArrivedAtEpochMs != null) {
             "Lock your arrival time before entering the final odometer."
         }
-        check(odometer >= shift.startOdometer) { "Ending odometer cannot precede starting odometer." }
+        OutingMileage.split(shift.startOdometer, shift.offlineOdometer, odometer)
         dao.updateShift(shift.copy(state = ShiftState.COMPLETE.name, endOdometer = odometer))
+    }
+
+    /** Optional reading at the offline boundary, entered while safely stopped. */
+    suspend fun saveOfflineOdometer(shiftId: String, odometer: Double) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Outing not found.")
+        check(shift.platform != Platform.FIELD_NATION.name && shift.state == ShiftState.RETURNING_HOME.name)
+        OutingMileage.split(shift.startOdometer, odometer, shift.endOdometer)
+        dao.updateShift(shift.copy(offlineOdometer = odometer))
+        event(shiftId, null, EventType.ODOMETER_RECORDED, GeoStamp(System.currentTimeMillis(), null, null, null),
+            JSONObject().put("boundary", "WENT_OFFLINE").put("odometer", odometer).toString())
+    }
+
+    /** Preserve the original tap and audit every explicit arrival-time correction. */
+    suspend fun correctHomeArrival(shiftId: String, minutesLate: Double) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Outing not found.")
+        check(shift.platform != Platform.FIELD_NATION.name && shift.state == ShiftState.RETURNING_HOME.name)
+        val tapped = shift.homeArrivedAtEpochMs ?: error("Tap Arrived home first.")
+        val corrected = OutingMileage.correctedArrival(requireNotNull(shift.endedAtEpochMs), tapped, minutesLate)
+        dao.updateShift(shift.copy(correctedHomeArrivedAtEpochMs = corrected))
+        event(shiftId, null, EventType.ARRIVAL_TIME_CORRECTED, GeoStamp(System.currentTimeMillis(), null, null, null),
+            JSONObject().put("originalTapAtEpochMs", tapped).put("arrivalAtEpochMs", corrected)
+                .put("reason", "Driver corrected a late arrival tap").toString())
     }
 
     /** Correct a mistyped odometer before the still-active outing is completed. */

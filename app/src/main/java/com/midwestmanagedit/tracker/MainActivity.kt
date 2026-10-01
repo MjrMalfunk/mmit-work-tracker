@@ -187,6 +187,8 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
     val state = ShiftState.valueOf(shift.state)
     val mode = QueueMode.valueOf(shift.queueMode)
     var endingOdometer by remember { mutableStateOf("") }
+    var offlineOdometer by remember(shift.id) { mutableStateOf("") }
+    var arrivalMinutesLate by remember(shift.id) { mutableStateOf("") }
 
     StatusCard(state, shift, pending.size)
     if (shift.platform == Platform.FIELD_NATION.name) {
@@ -247,11 +249,33 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
         }
         ShiftState.BREAK -> BigButton("RESUME", { vm.breakMode(false) })
         ShiftState.RETURNING_HOME -> {
+            Text("Offline trip home is part of this outing's total miles, not extra mileage.")
+            Text(shift.offlineOdometer?.let { "Odometer when you went offline: $it" }
+                ?: "Optional: record the odometer from the moment you went offline for an exact mileage split. Enter it only while safely stopped; do not use a later reading.")
+            OutlinedTextField(
+                value = offlineOdometer,
+                onValueChange = { offlineOdometer = it },
+                label = { Text("Odometer when you went offline") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+            )
+            OutlinedButton(
+                onClick = { offlineOdometer.toDoubleOrNull()?.let(vm::saveOfflineOdometer) },
+                enabled = offlineOdometer.toDoubleOrNull()?.let { it.isFinite() && it >= shift.startOdometer && it <= 9_999_999 } == true,
+            ) { Text("Save offline reading") }
             if (shift.homeArrivedAtEpochMs == null) {
                 Text("GPS is recording the deadhead trip home. Tap this as soon as you arrive; you can enter the odometer afterward.", fontWeight = FontWeight.Bold)
                 BigButton("ARRIVED HOME — LOCK TIME", vm::lockHomeArrival)
             } else {
                 Text("Arrival time is locked and GPS has stopped. Enter the odometer when you are ready.", fontWeight = FontWeight.Bold)
+                Text("Forgot to tap on arrival? Enter how many minutes before the original tap you arrived. The original tap is kept.")
+                OutlinedTextField(value = arrivalMinutesLate, onValueChange = { arrivalMinutesLate = it },
+                    label = { Text("Minutes before the arrival tap") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedButton(onClick = { arrivalMinutesLate.toDoubleOrNull()?.let(vm::correctHomeArrival) },
+                    enabled = arrivalMinutesLate.toDoubleOrNull()?.let { it.isFinite() && it >= 0 } == true
+                ) { Text("Save arrival correction") }
+                shift.correctedHomeArrivedAtEpochMs?.let {
+                    Text("Corrected arrival: " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)))
+                }
                 OutlinedTextField(
                     value = endingOdometer,
                     onValueChange = { endingOdometer = it.filter { c -> c.isDigit() || c == '.' } },
@@ -261,7 +285,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
                 BigButton(
                     "SAVE FINAL ODOMETER — COMPLETE",
                     { endingOdometer.toDoubleOrNull()?.let(vm::finishHomeArrival) },
-                    endingOdometer.toDoubleOrNull()?.let { it >= shift.startOdometer } == true,
+                    endingOdometer.toDoubleOrNull()?.let { it.isFinite() && it >= (shift.offlineOdometer ?: shift.startOdometer) && it <= 9_999_999 } == true,
                 )
             }
         }
@@ -373,6 +397,17 @@ private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewMode
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(label, fontWeight = FontWeight.Bold, color = if (shift.platform == Platform.FIELD_NATION.name) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
                         Text("${miles?.let { "%.1f miles".format(it) } ?: "miles pending"} • ${if (shift.roundTripExpected) "round trip" else "completed outing"}")
+                        if (shift.platform != Platform.FIELD_NATION.name) {
+                            Text("Total includes the offline trip home.")
+                            val offlineReading = shift.offlineOdometer
+                            val finalReading = shift.endOdometer
+                            if (offlineReading != null && finalReading != null) {
+                                Text("Before offline: %.1f mi • Offline home: %.1f mi (odometer)".format(
+                                    offlineReading - shift.startOdometer, finalReading - offlineReading))
+                            } else {
+                                Text("No offline odometer reading. Export includes separate GPS estimates.")
+                            }
+                        }
                         val note = noteDrafts[shift.id] ?: shift.closingNote.orEmpty()
                         OutlinedTextField(
                             value = note,

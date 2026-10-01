@@ -40,6 +40,8 @@ class ShiftExporter(
                 if (!bundle.shift.closingNote.isNullOrBlank()) put("closingNote", bundle.shift.closingNote)
                 put("startOdometer", bundle.shift.startOdometer)
                 put("endOdometer", bundle.shift.endOdometer)
+                put("offlineOdometer", bundle.shift.offlineOdometer)
+                put("correctedHomeArrivedAtEpochMs", bundle.shift.correctedHomeArrivedAtEpochMs)
             })
             .put("rides", JSONArray().apply {
                 bundle.rides.sortedBy { it.sequence }.forEach { ride ->
@@ -83,6 +85,9 @@ class ShiftExporter(
                 }
             })
 
+        if (bundle.shift.platform != "FIELD_NATION") {
+            root.put("mileageSummary", GigMileageSummary.build(bundle.shift, points, events))
+        }
         val directory = File(context.cacheDir, "exports").apply { mkdirs() }
         return File(directory, "mmit-work-$shiftId.json").also { it.writeText(root.toString(2)) }
     }

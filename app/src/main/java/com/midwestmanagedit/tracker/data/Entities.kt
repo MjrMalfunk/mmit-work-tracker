@@ -16,6 +16,8 @@ data class ShiftEntity(
     val homeArrivedAtEpochMs: Long? = null,
     val startOdometer: Double,
     val endOdometer: Double? = null,
+    val offlineOdometer: Double? = null,
+    val correctedHomeArrivedAtEpochMs: Long? = null,
     val activeRideId: String? = null,
     val workOrderNumber: String? = null,
     @ColumnInfo(defaultValue = "0") val roundTripExpected: Boolean = false,

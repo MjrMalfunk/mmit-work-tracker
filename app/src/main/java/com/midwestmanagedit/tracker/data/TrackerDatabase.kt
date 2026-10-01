@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TrackingEventEntity::class,
         LocationPointEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class TrackerDatabase : RoomDatabase() {
@@ -28,7 +28,7 @@ abstract class TrackerDatabase : RoomDatabase() {
                 context.applicationContext,
                 TrackerDatabase::class.java,
                 "mmit-tracker.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 .also { instance = it }
         }
@@ -42,6 +42,13 @@ abstract class TrackerDatabase : RoomDatabase() {
                     "UPDATE shifts SET completedAtEpochMs = homeArrivedAtEpochMs " +
                         "WHERE state = 'COMPLETE' AND completedAtEpochMs IS NULL",
                 )
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE shifts ADD COLUMN offlineOdometer REAL")
+                db.execSQL("ALTER TABLE shifts ADD COLUMN correctedHomeArrivedAtEpochMs INTEGER")
             }
         }
 
