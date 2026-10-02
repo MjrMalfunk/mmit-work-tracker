@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.midwestmanagedit.tracker.data.RideEntity
 import com.midwestmanagedit.tracker.data.ShiftEntity
+import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.Platform
 import com.midwestmanagedit.tracker.domain.QueueMode
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
 private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
     val shift by vm.activeShift.collectAsState()
     val pending by vm.pendingRides.collectAsState()
+    val materials by vm.materialUsage.collectAsState()
     val completed by vm.completedOutings.collectAsState()
     val message by vm.message.collectAsState()
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -109,7 +111,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             if (shift == null) {
                 StartShiftCard(vm)
                 if (completed.isNotEmpty()) CompletedOutingsCard(completed, vm)
-            } else ActiveShiftCard(shift!!, pending, vm)
+            } else ActiveShiftCard(shift!!, pending, materials, vm)
         }
     }
 }
@@ -183,7 +185,7 @@ private fun StartShiftCard(vm: TrackerViewModel) {
 }
 
 @Composable
-private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: TrackerViewModel) {
+private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
     val state = ShiftState.valueOf(shift.state)
     val mode = QueueMode.valueOf(shift.queueMode)
     var endingOdometer by remember { mutableStateOf("") }
@@ -192,7 +194,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
 
     StatusCard(state, shift, pending.size)
     if (shift.platform == Platform.FIELD_NATION.name) {
-        FieldNationActiveCard(state, shift, vm)
+        FieldNationActiveCard(state, shift, materials, vm)
         return
     }
     if (state != ShiftState.RETURNING_HOME) {
@@ -299,12 +301,15 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, vm: T
 }
 
 @Composable
-private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: TrackerViewModel) {
+private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
     var endingOdometer by remember { mutableStateOf("") }
     var startingOdometerCorrection by remember { mutableStateOf("") }
     var workOrderNumberCorrection by remember { mutableStateOf("") }
     Text("Work order ${shift.workOrderNumber}", fontWeight = FontWeight.Bold)
     Text(if (shift.roundTripExpected) "Round trip expected" else "One-way / continuing elsewhere")
+    if (state == ShiftState.WORKING || state == ShiftState.WRAP_UP) {
+        FieldNationMaterialsCard(materials, vm)
+    }
     when (state) {
         ShiftState.EN_ROUTE_SITE -> BigButton("ARRIVED AT SITE", vm::fieldArriveSite)
         ShiftState.ON_SITE -> BigButton("CHECK IN — START WORK", vm::fieldStartWork)
@@ -370,6 +375,30 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, vm: Tra
             )
         }
         else -> Unit
+    }
+}
+
+@Composable
+private fun FieldNationMaterialsCard(materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
+    var sku by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Materials used", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Enter the exact SKU from OPS inventory. It will be attached to this work order when you export the JSON.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            materials.forEach { material ->
+                Text("${material.sku} · ${"%.3f".format(material.quantity)}${material.notes?.let { " · $it" } ?: ""}")
+            }
+            OutlinedTextField(value = sku, onValueChange = { sku = it.uppercase() }, label = { Text("Inventory SKU") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(value = quantity, onValueChange = { quantity = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Quantity used") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Material note (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            val amount = quantity.toDoubleOrNull()
+            BigButton("ADD MATERIAL USE", {
+                amount?.let { vm.addFieldNationMaterial(sku, it, notes) }
+                sku = ""; quantity = ""; notes = ""
+            }, sku.isNotBlank() && amount?.let { it.isFinite() && it > 0 } == true)
+        }
     }
 }
 

@@ -75,6 +75,19 @@ data class LocationPointEntity(
     val speedMetersPerSecond: Float?,
 )
 
+@Entity(
+    tableName = "shift_material_usage",
+    indices = [Index("shiftId"), Index(value = ["shiftId", "sku"], unique = true)],
+)
+data class ShiftMaterialUsageEntity(
+    @PrimaryKey val id: String,
+    val shiftId: String,
+    val sku: String,
+    val quantity: Double,
+    val notes: String? = null,
+    val createdAtEpochMs: Long,
+)
+
 data class ActiveSnapshot(
     val shiftId: String,
     val shiftState: String,

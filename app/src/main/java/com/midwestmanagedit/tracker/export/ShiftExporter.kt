@@ -13,6 +13,7 @@ class ShiftExporter(
     suspend fun export(shiftId: String): File {
         val bundle = repository.shiftWithRides(shiftId) ?: error("Shift not found.")
         val events = repository.events(shiftId)
+        val materials = repository.materialUsage(shiftId)
         // Android can hand the location callback a cached point a few milliseconds
         // before the start tap has been committed.  It is not part of the outing.
         // Likewise, no point after the recorded completion belongs in an export.
@@ -81,6 +82,15 @@ class ShiftExporter(
                         put("longitude", point.longitude)
                         put("accuracyMeters", point.accuracyMeters)
                         put("speedMetersPerSecond", point.speedMetersPerSecond)
+                    })
+                }
+            })
+            .put("materials", JSONArray().apply {
+                materials.forEach { material ->
+                    put(JSONObject().apply {
+                        put("sku", material.sku)
+                        put("quantity", material.quantity)
+                        if (!material.notes.isNullOrBlank()) put("notes", material.notes)
                     })
                 }
             })

@@ -20,6 +20,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
     fun observeLatestCompletedShift(): Flow<ShiftEntity?> = dao.observeLatestCompletedShift()
     fun observePendingRides(shiftId: String): Flow<List<RideEntity>> = dao.observePendingRides(shiftId)
     fun observeCompletedShifts(limit: Int): Flow<List<ShiftEntity>> = dao.observeCompletedShifts(limit)
+    fun observeMaterialUsage(shiftId: String): Flow<List<ShiftMaterialUsageEntity>> = dao.observeMaterialUsage(shiftId)
 
     suspend fun saveClosingNote(shiftId: String, note: String) = database.withTransaction {
         val shift = dao.shift(shiftId) ?: error("Outing not found.")
@@ -256,6 +257,25 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(shift.id, null, EventType.FN_WORK_COMPLETED, stamp)
     }
 
+    /** Adds to an existing SKU line so an onsite correction never produces duplicate export rows. */
+    suspend fun addFieldNationMaterialUsage(shiftId: String, skuInput: String, quantity: Double, notes: String) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Outing not found.")
+        check(shift.platform == Platform.FIELD_NATION.name && shift.state in setOf(ShiftState.WORKING.name, ShiftState.WRAP_UP.name)) {
+            "Materials can be recorded while you are working or wrapping up."
+        }
+        val sku = skuInput.trim().uppercase()
+        check(sku.matches(Regex("[A-Z0-9][A-Z0-9._-]{0,99}"))) { "Enter the SKU exactly as it appears in OPS inventory." }
+        check(quantity.isFinite() && quantity > 0.0 && quantity <= 10_000.0) { "Enter a material quantity greater than zero." }
+        val cleanNotes = notes.trim().takeIf { it.isNotBlank() }
+        check(cleanNotes == null || (cleanNotes.length <= 10_000 && !cleanNotes.contains('\u0000'))) { "Material note is too long or invalid." }
+        val current = dao.materialUsage(shiftId, sku)
+        if (current == null) {
+            dao.insertMaterialUsage(ShiftMaterialUsageEntity(UUID.randomUUID().toString(), shiftId, sku, quantity, cleanNotes, System.currentTimeMillis()))
+        } else {
+            dao.updateMaterialUsage(current.copy(quantity = current.quantity + quantity, notes = cleanNotes ?: current.notes))
+        }
+    }
+
     suspend fun fieldCheckOut(stamp: GeoStamp) = database.withTransaction {
         val shift = requireFieldShift(ShiftState.WRAP_UP)
         dao.updateShift(
@@ -393,6 +413,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
     suspend fun shiftWithRides(id: String) = dao.shiftWithRides(id)
     suspend fun events(id: String) = dao.events(id)
     suspend fun locations(id: String) = dao.locations(id)
+    suspend fun materialUsage(id: String) = dao.materialUsage(id)
 
     // ------------------------------------------------------------
     // INTERNAL HELPERS

@@ -70,4 +70,19 @@ interface TrackerDao {
 
     @Query("SELECT * FROM location_points WHERE shiftId = :shiftId ORDER BY occurredAtEpochMs, id")
     suspend fun locations(shiftId: String): List<LocationPointEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertMaterialUsage(usage: ShiftMaterialUsageEntity)
+
+    @Update
+    suspend fun updateMaterialUsage(usage: ShiftMaterialUsageEntity)
+
+    @Query("SELECT * FROM shift_material_usage WHERE shiftId = :shiftId AND sku = :sku LIMIT 1")
+    suspend fun materialUsage(shiftId: String, sku: String): ShiftMaterialUsageEntity?
+
+    @Query("SELECT * FROM shift_material_usage WHERE shiftId = :shiftId ORDER BY createdAtEpochMs, id")
+    suspend fun materialUsage(shiftId: String): List<ShiftMaterialUsageEntity>
+
+    @Query("SELECT * FROM shift_material_usage WHERE shiftId = :shiftId ORDER BY createdAtEpochMs, id")
+    fun observeMaterialUsage(shiftId: String): Flow<List<ShiftMaterialUsageEntity>>
 }

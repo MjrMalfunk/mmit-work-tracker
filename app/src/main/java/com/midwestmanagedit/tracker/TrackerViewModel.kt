@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.midwestmanagedit.tracker.data.RideEntity
 import com.midwestmanagedit.tracker.data.ShiftEntity
+import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
 import com.midwestmanagedit.tracker.data.TrackerRepository
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.Platform
@@ -35,6 +36,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         .flatMapLatest { shift -> shift?.let { repository.observePendingRides(it.id) } ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val materialUsage: StateFlow<List<ShiftMaterialUsageEntity>> = activeShift
+        .flatMapLatest { shift -> shift?.let { repository.observeMaterialUsage(it.id) } ?: flowOf(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val latestCompleted: StateFlow<ShiftEntity?> = repository.observeLatestCompletedShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -59,6 +64,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun fieldStartWork() = act { repository.fieldStartWork(LocationMemory.stamp()) }
     fun fieldCompleteWork() = act { repository.fieldCompleteWork(LocationMemory.stamp()) }
     fun fieldCheckOut() = act { repository.fieldCheckOut(LocationMemory.stamp()) }
+    fun addFieldNationMaterial(sku: String, quantity: Double, notes: String) = act {
+        repository.addFieldNationMaterialUsage(activeShift.value?.id ?: error("No active outing."), sku, quantity, notes)
+    }
 
     fun acceptRide(mode: AcquisitionMode) = act {
         repository.acceptRide(mode, LocationMemory.stamp())
