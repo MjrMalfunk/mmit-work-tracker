@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,6 +44,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.midwestmanagedit.tracker.data.RideEntity
@@ -52,6 +56,8 @@ import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.Platform
 import com.midwestmanagedit.tracker.domain.QueueMode
 import com.midwestmanagedit.tracker.domain.ShiftState
+import com.midwestmanagedit.tracker.ui.InventoryConnectionCard
+import com.midwestmanagedit.tracker.ui.FieldNationMaterialsCard
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,6 +76,14 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.refreshInventory()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val shift by vm.activeShift.collectAsState()
     val pending by vm.pendingRides.collectAsState()
     val materials by vm.materialUsage.collectAsState()
@@ -100,6 +114,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             Text("MMIT Work Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("Your field and driving work center", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             Text("Offline-first • Rideshare + FieldNation • GPS saved locally")
+            InventoryConnectionCard(vm)
             if (message != null) {
                 Card(Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -375,30 +390,6 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, materia
             )
         }
         else -> Unit
-    }
-}
-
-@Composable
-private fun FieldNationMaterialsCard(materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
-    var sku by remember { mutableStateOf("") }
-    var quantity by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Materials used", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Enter the exact SKU from OPS inventory. It will be attached to this work order when you export the JSON.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            materials.forEach { material ->
-                Text("${material.sku} · ${"%.3f".format(material.quantity)}${material.notes?.let { " · $it" } ?: ""}")
-            }
-            OutlinedTextField(value = sku, onValueChange = { sku = it.uppercase() }, label = { Text("Inventory SKU") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            OutlinedTextField(value = quantity, onValueChange = { quantity = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Quantity used") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Material note (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            val amount = quantity.toDoubleOrNull()
-            BigButton("ADD MATERIAL USE", {
-                amount?.let { vm.addFieldNationMaterial(sku, it, notes) }
-                sku = ""; quantity = ""; notes = ""
-            }, sku.isNotBlank() && amount?.let { it.isFinite() && it > 0 } == true)
-        }
     }
 }
 

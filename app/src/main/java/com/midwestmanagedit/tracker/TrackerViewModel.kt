@@ -4,6 +4,13 @@ import android.app.Application
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.Uri
+import com.midwestmanagedit.tracker.inventory.parseInventorySnapshot
+import com.midwestmanagedit.tracker.inventory.readBytesLimited
+import org.json.JSONObject
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,11 +30,65 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import java.io.File
 import com.midwestmanagedit.tracker.export.ShiftExporter
 
 class TrackerViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: TrackerRepository = (application as TrackerApplication).repository
+    private val inventoryRepository = (application as TrackerApplication).inventoryCatalog
+    val inventoryCatalog = inventoryRepository.state
+    val savingMaterial = MutableStateFlow(false)
+    private val connectivity = application.getSystemService(ConnectivityManager::class.java)
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { refreshInventory() }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) refreshInventory()
+        }
+    }
+
+    init {
+        connectivity.registerDefaultNetworkCallback(networkCallback)
+        refreshInventory()
+    }
+
+    fun refreshInventory(force: Boolean = false) {
+        viewModelScope.launch {
+            try { withContext(Dispatchers.IO) { inventoryRepository.refresh(force) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { message.value = "Inventory could not refresh. Your saved catalog is still available." }
+        }
+    }
+
+    fun connectInventory(serverUrl: String, email: String, password: String, code: String, onConnected: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { inventoryRepository.signIn(serverUrl, email, password, code) }
+                if (inventoryCatalog.value.authenticated) onConnected()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { message.value = error.message ?: "Could not connect to OPS V2." }
+        }
+    }
+
+    fun disconnectInventory() = act {
+        withContext(Dispatchers.IO) { inventoryRepository.signOut() }
+    }
+
+    fun importInventoryCatalog(uri: Uri) = act {
+        withContext(Dispatchers.IO) {
+            val input = getApplication<Application>().contentResolver.openInputStream(uri) ?: error("Could not open this catalog file.")
+            val imported = input.use { parseInventorySnapshot(JSONObject(String(it.readBytesLimited(2 * 1024 * 1024), Charsets.UTF_8))) }
+            inventoryRepository.importCatalog(imported)
+        }
+        message.value = "Inventory catalog saved. You can search these items offline."
+    }
+
+    override fun onCleared() {
+        connectivity.unregisterNetworkCallback(networkCallback)
+        super.onCleared()
+    }
 
     val activeShift: StateFlow<ShiftEntity?> = repository.observeActiveShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -64,8 +125,19 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun fieldStartWork() = act { repository.fieldStartWork(LocationMemory.stamp()) }
     fun fieldCompleteWork() = act { repository.fieldCompleteWork(LocationMemory.stamp()) }
     fun fieldCheckOut() = act { repository.fieldCheckOut(LocationMemory.stamp()) }
-    fun addFieldNationMaterial(sku: String, quantity: Double, notes: String) = act {
-        repository.addFieldNationMaterialUsage(activeShift.value?.id ?: error("No active outing."), sku, quantity, notes)
+    fun addFieldNationMaterial(sku: String, quantity: Double, notes: String, onSaved: () -> Unit = {}) {
+        if (savingMaterial.value) return
+        val shiftId = activeShift.value?.id ?: run { message.value = "No active outing."; return }
+        savingMaterial.value = true
+        viewModelScope.launch {
+            try {
+                check(inventoryCatalog.value.items.any { it.sku == sku }) { "Select an item from your inventory catalog." }
+                repository.addFieldNationMaterialUsage(shiftId, sku, quantity, notes)
+                onSaved()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { message.value = error.message ?: "Material use could not be recorded." }
+            finally { savingMaterial.value = false }
+        }
     }
 
     fun acceptRide(mode: AcquisitionMode) = act {

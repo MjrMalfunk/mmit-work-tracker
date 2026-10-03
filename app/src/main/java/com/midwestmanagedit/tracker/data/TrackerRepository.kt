@@ -1,5 +1,7 @@
 package com.midwestmanagedit.tracker.data
 
+import com.midwestmanagedit.tracker.inventory.validateMaterialQuantity
+
 import androidx.room.withTransaction
 import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
@@ -265,10 +267,10 @@ class TrackerRepository(private val database: TrackerDatabase) {
         }
         val sku = skuInput.trim().uppercase()
         check(sku.matches(Regex("[A-Z0-9][A-Z0-9._-]{0,99}"))) { "Enter the SKU exactly as it appears in OPS inventory." }
-        check(quantity.isFinite() && quantity > 0.0 && quantity <= 10_000.0) { "Enter a material quantity greater than zero." }
         val cleanNotes = notes.trim().takeIf { it.isNotBlank() }
         check(cleanNotes == null || (cleanNotes.length <= 10_000 && !cleanNotes.contains('\u0000'))) { "Material note is too long or invalid." }
         val current = dao.materialUsage(shiftId, sku)
+        validateMaterialQuantity(quantity, current?.quantity ?: 0.0)
         if (current == null) {
             dao.insertMaterialUsage(ShiftMaterialUsageEntity(UUID.randomUUID().toString(), shiftId, sku, quantity, cleanNotes, System.currentTimeMillis()))
         } else {
