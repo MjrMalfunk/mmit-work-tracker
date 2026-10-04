@@ -1,6 +1,7 @@
 package com.midwestmanagedit.tracker.data
 
 import com.midwestmanagedit.tracker.inventory.validateMaterialQuantity
+import com.midwestmanagedit.tracker.tracking.GpsHealth
 
 import androidx.room.withTransaction
 import com.midwestmanagedit.tracker.domain.OutingMileage
@@ -23,6 +24,25 @@ class TrackerRepository(private val database: TrackerDatabase) {
     fun observePendingRides(shiftId: String): Flow<List<RideEntity>> = dao.observePendingRides(shiftId)
     fun observeCompletedShifts(limit: Int): Flow<List<ShiftEntity>> = dao.observeCompletedShifts(limit)
     fun observeMaterialUsage(shiftId: String): Flow<List<ShiftMaterialUsageEntity>> = dao.observeMaterialUsage(shiftId)
+
+    /** Recheck the arrival boundary inside the same transaction that saves a callback. */
+    suspend fun saveGpsPoint(point: LocationPointEntity): Boolean = database.withTransaction {
+        val shift = dao.activeShift() ?: return@withTransaction false
+        if (shift.id != point.shiftId || shift.homeArrivedAtEpochMs != null ||
+            point.occurredAtEpochMs < shift.startedAtEpochMs) return@withTransaction false
+        dao.insertLocation(point.copy(rideId = shift.activeRideId, phase = shift.state))
+        true
+    }
+
+    /** Stored locally with existing Room v5 tables; exported separately from work events. */
+    suspend fun recordGpsDiagnostic(shiftId: String, payload: String) = database.withTransaction {
+        if (dao.shift(shiftId) == null) return@withTransaction
+        dao.insertEvent(TrackingEventEntity(
+            id = UUID.randomUUID().toString(), shiftId = shiftId, rideId = null,
+            type = GpsHealth.DIAGNOSTIC_EVENT, occurredAtEpochMs = System.currentTimeMillis(),
+            latitude = null, longitude = null, accuracyMeters = null, payloadJson = payload,
+        ))
+    }
 
     suspend fun saveClosingNote(shiftId: String, note: String) = database.withTransaction {
         val shift = dao.shift(shiftId) ?: error("Outing not found.")

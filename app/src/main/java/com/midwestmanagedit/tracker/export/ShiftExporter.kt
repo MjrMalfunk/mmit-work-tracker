@@ -2,6 +2,7 @@ package com.midwestmanagedit.tracker.export
 
 import android.content.Context
 import com.midwestmanagedit.tracker.data.TrackerRepository
+import com.midwestmanagedit.tracker.tracking.GpsHealth
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -12,7 +13,8 @@ class ShiftExporter(
 ) {
     suspend fun export(shiftId: String): File {
         val bundle = repository.shiftWithRides(shiftId) ?: error("Shift not found.")
-        val events = repository.events(shiftId)
+        val allEvents = repository.events(shiftId)
+        val events = allEvents.filter { it.type != GpsHealth.DIAGNOSTIC_EVENT }
         val materials = repository.materialUsage(shiftId)
         // Android can hand the location callback a cached point a few milliseconds
         // before the start tap has been committed.  It is not part of the outing.
@@ -27,6 +29,11 @@ class ShiftExporter(
 
         val root = JSONObject()
             .put("schema", "mmit.work-tracker.v2")
+            .put("gpsDiagnostics", JSONObject().put("version", 1).put("records", JSONArray().apply {
+                allEvents.filter { it.type == GpsHealth.DIAGNOSTIC_EVENT }.forEach { event ->
+                    put(JSONObject(event.payloadJson).put("occurredAtEpochMs", event.occurredAtEpochMs))
+                }
+            }))
             .put("exportedAtEpochMs", System.currentTimeMillis())
             .put("shift", JSONObject().apply {
                 put("id", bundle.shift.id)

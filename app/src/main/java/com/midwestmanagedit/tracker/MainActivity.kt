@@ -60,6 +60,7 @@ import com.midwestmanagedit.tracker.domain.QueueMode
 import com.midwestmanagedit.tracker.domain.ShiftState
 import com.midwestmanagedit.tracker.ui.InventoryConnectionCard
 import com.midwestmanagedit.tracker.ui.FieldNationMaterialsCard
+import com.midwestmanagedit.tracker.ui.GpsHealthCard
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,7 +82,11 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) vm.refreshInventory()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.setAppVisible(true)
+                vm.refreshInventory()
+            }
+            if (event == Lifecycle.Event.ON_PAUSE) vm.setAppVisible(false)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -93,7 +98,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
     val message by vm.message.collectAsState()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { }
+    ) { vm.recoverTracking() }
 
     LaunchedEffect(Unit) {
         val permissions = buildList {
@@ -116,6 +121,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             Text("MMIT Work Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("Your field and driving work center", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             Text("Offline-first • Rideshare + FieldNation • GPS saved locally")
+            shift?.takeIf { it.homeArrivedAtEpochMs == null }?.let { GpsHealthCard(it.id, vm) }
             InventoryConnectionCard(vm)
             if (message != null) {
                 Card(Modifier.fillMaxWidth()) {

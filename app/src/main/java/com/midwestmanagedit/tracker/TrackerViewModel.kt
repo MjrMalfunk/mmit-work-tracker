@@ -23,6 +23,12 @@ import com.midwestmanagedit.tracker.domain.Platform
 import com.midwestmanagedit.tracker.domain.QueueMode
 import com.midwestmanagedit.tracker.tracking.LocationMemory
 import com.midwestmanagedit.tracker.tracking.TrackingService
+import com.midwestmanagedit.tracker.tracking.GpsHealth
+import com.midwestmanagedit.tracker.tracking.GpsHealthState
+import com.midwestmanagedit.tracker.tracking.GpsStatus
+import android.location.LocationManager
+import android.os.SystemClock
+import androidx.core.location.LocationManagerCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +47,8 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     private val inventoryRepository = (application as TrackerApplication).inventoryCatalog
     val inventoryCatalog = inventoryRepository.state
     val savingMaterial = MutableStateFlow(false)
+    val gpsHealth = GpsHealthState.state
+    private var appVisible = false
     private val connectivity = application.getSystemService(ConnectivityManager::class.java)
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { refreshInventory() }
@@ -111,12 +119,14 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
 
     fun start(platform: Platform, queueMode: QueueMode, odometer: Double, firstRide: Boolean) = act {
         requireLocation()
+        LocationMemory.clear()
         repository.startShift(platform, queueMode, odometer, LocationMemory.stamp(), firstRide)
         startTrackingService()
     }
 
     fun startFieldNation(workOrderNumber: String, roundTrip: Boolean, odometer: Double) = act {
         requireLocation()
+        LocationMemory.clear()
         repository.startFieldNation(workOrderNumber, roundTrip, odometer, LocationMemory.stamp())
         startTrackingService()
     }
@@ -185,6 +195,8 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     fun lockHomeArrival() = act {
         val shift = activeShift.value ?: error("No outing to finish.")
         repository.lockHomeArrival(shift.id, LocationMemory.stamp())
+        GpsHealthState.publish(GpsHealth(shiftId = shift.id, checkedAtElapsedMs = SystemClock.elapsedRealtime()))
+        LocationMemory.clear()
         getApplication<Application>().stopService(Intent(getApplication(), TrackingService::class.java))
     }
 
@@ -234,11 +246,58 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun startTrackingService() {
+    fun setAppVisible(visible: Boolean) {
+        appVisible = visible
+        if (visible) recoverTracking()
+    }
+
+    /** Resume the existing service only; never create an outing or replay ride commands. */
+    fun recoverTracking(force: Boolean = false) {
+        viewModelScope.launch {
+            try {
+                val shift = repository.dao.activeShift() ?: return@launch
+                if (!appVisible || shift.homeArrivedAtEpochMs != null) return@launch
+                val app = getApplication<Application>()
+                val permission = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    .any { ContextCompat.checkSelfPermission(app, it) == PackageManager.PERMISSION_GRANTED }
+                val enabled = LocationManagerCompat.isLocationEnabled(app.getSystemService(LocationManager::class.java))
+                val previous = gpsHealth.value.takeIf { it.shiftId == shift.id } ?: GpsHealth(shiftId = shift.id)
+                if (!permission || !enabled) {
+                    GpsHealthState.publish(previous.copy(
+                        status = if (!permission) GpsStatus.PERMISSION_REQUIRED else GpsStatus.LOCATION_DISABLED,
+                        checkedAtElapsedMs = SystemClock.elapsedRealtime(),
+                    ))
+                    return@launch
+                }
+                if (previous.status == GpsStatus.STOPPED) GpsHealthState.publish(previous.copy(
+                    status = GpsStatus.WAITING, checkedAtElapsedMs = SystemClock.elapsedRealtime(),
+                ))
+                startTrackingService(if (force) TrackingService.ACTION_RETRY else TrackingService.ACTION_START)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                GpsHealthState.publish(gpsHealth.value.copy(
+                    status = GpsStatus.SERVICE_UNAVAILABLE, checkedAtElapsedMs = SystemClock.elapsedRealtime(),
+                ))
+                message.value = "GPS could not restart. Check location permission and retry with the tracker open."
+                gpsHealth.value.shiftId?.let { id ->
+                    runCatching { repository.recordGpsDiagnostic(id, JSONObject()
+                        .put("reason", "FOREGROUND_START_FAILED").put("error", error.javaClass.simpleName).toString()) }
+                }
+            }
+        }
+    }
+
+    private suspend fun startTrackingService(action: String = TrackingService.ACTION_START) {
         val app = getApplication<Application>()
+        val shift = repository.dao.activeShift() ?: return
+        if (shift.homeArrivedAtEpochMs != null) return
+        if (gpsHealth.value.shiftId != shift.id || gpsHealth.value.status == GpsStatus.STOPPED) {
+            GpsHealthState.publish(GpsHealth(shiftId = shift.id, status = GpsStatus.WAITING,
+                checkedAtElapsedMs = SystemClock.elapsedRealtime()))
+        }
         ContextCompat.startForegroundService(
             app,
-            Intent(app, TrackingService::class.java).setAction(TrackingService.ACTION_START),
+            Intent(app, TrackingService::class.java).setAction(action),
         )
     }
 }
