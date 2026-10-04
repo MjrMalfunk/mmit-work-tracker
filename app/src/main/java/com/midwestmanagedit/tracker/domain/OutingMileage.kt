@@ -30,6 +30,17 @@ object OutingMileage {
         return tappedAt - (minutesLate * 60_000).roundToLong()
     }
 
+    /** Final save includes an entered offline reading; blank input preserves an already saved one. */
+    fun offlineForCompletion(start: Double, savedOffline: Double?, end: Double, enteredOffline: String?): Double? {
+        val input = enteredOffline?.trim().orEmpty()
+        val offline = if (input.isEmpty()) savedOffline else {
+            requireNotNull(input.toDoubleOrNull()) { "Enter a valid offline odometer or leave it blank." }
+        }
+        // Validate both boundaries before any part of the completion is persisted.
+        split(start, offline, end)
+        return offline
+    }
+
     /** Integrate each GPS link once, clipped at time boundaries. Crossing links are estimates.
      * Keep gaps visible; neither silence nor a stationary fix proves arrival at home.
      */

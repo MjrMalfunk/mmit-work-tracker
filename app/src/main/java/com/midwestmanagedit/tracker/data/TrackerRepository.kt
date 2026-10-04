@@ -349,13 +349,23 @@ class TrackerRepository(private val database: TrackerDatabase) {
     }
 
     /** Completes the already-arrived outing without changing its locked arrival timestamp. */
-    suspend fun finishHomeArrival(shiftId: String, odometer: Double) = database.withTransaction {
+    suspend fun finishHomeArrival(shiftId: String, odometer: Double, offlineReadingDraft: String? = null) = database.withTransaction {
         val shift = dao.shift(shiftId) ?: error("Shift not found.")
         check(shift.state == ShiftState.RETURNING_HOME.name && shift.homeArrivedAtEpochMs != null) {
             "Lock your arrival time before entering the final odometer."
         }
-        OutingMileage.split(shift.startOdometer, shift.offlineOdometer, odometer)
-        dao.updateShift(shift.copy(state = ShiftState.COMPLETE.name, endOdometer = odometer))
+        check(offlineReadingDraft.isNullOrBlank() || shift.platform != Platform.FIELD_NATION.name) {
+            "Offline odometer readings apply to rideshare outings."
+        }
+        val offlineReading = OutingMileage.offlineForCompletion(
+            shift.startOdometer, shift.offlineOdometer, odometer, offlineReadingDraft,
+        )
+        // Both readings and their audit event commit together. The locked arrival stays intact.
+        dao.updateShift(shift.copy(state = ShiftState.COMPLETE.name, endOdometer = odometer, offlineOdometer = offlineReading))
+        if (offlineReading != null && offlineReading != shift.offlineOdometer) {
+            event(shiftId, null, EventType.ODOMETER_RECORDED, GeoStamp(System.currentTimeMillis(), null, null, null),
+                JSONObject().put("boundary", "WENT_OFFLINE").put("odometer", offlineReading).toString())
+        }
     }
 
     /** Optional reading at the offline boundary, entered while safely stopped. */

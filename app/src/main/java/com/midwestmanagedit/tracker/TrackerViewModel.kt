@@ -188,9 +188,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         getApplication<Application>().stopService(Intent(getApplication(), TrackingService::class.java))
     }
 
-    fun finishHomeArrival(odometer: Double) = act {
+    fun finishHomeArrival(odometer: Double, offlineReadingDraft: String? = null) = act {
         val shift = activeShift.value ?: error("No outing to finish.")
-        repository.finishHomeArrival(shift.id, odometer)
+        repository.finishHomeArrival(shift.id, odometer, offlineReadingDraft)
     }
 
     fun correctStartingOdometer(odometer: Double) = act {

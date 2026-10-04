@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -54,6 +55,7 @@ import com.midwestmanagedit.tracker.data.ShiftEntity
 import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.Platform
+import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.QueueMode
 import com.midwestmanagedit.tracker.domain.ShiftState
 import com.midwestmanagedit.tracker.ui.InventoryConnectionCard
@@ -203,9 +205,9 @@ private fun StartShiftCard(vm: TrackerViewModel) {
 private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
     val state = ShiftState.valueOf(shift.state)
     val mode = QueueMode.valueOf(shift.queueMode)
-    var endingOdometer by remember { mutableStateOf("") }
-    var offlineOdometer by remember(shift.id) { mutableStateOf("") }
-    var arrivalMinutesLate by remember(shift.id) { mutableStateOf("") }
+    var endingOdometer by rememberSaveable(shift.id) { mutableStateOf("") }
+    var offlineOdometer by rememberSaveable(shift.id) { mutableStateOf(shift.offlineOdometer?.toString().orEmpty()) }
+    var arrivalMinutesLate by rememberSaveable(shift.id) { mutableStateOf("") }
 
     StatusCard(state, shift, pending.size)
     if (shift.platform == Platform.FIELD_NATION.name) {
@@ -275,6 +277,7 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
                 label = { Text("Odometer when you went offline") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
             )
+            Text("Your final save includes the offline reading entered here. You can also save it now.")
             OutlinedButton(
                 onClick = { offlineOdometer.toDoubleOrNull()?.let(vm::saveOfflineOdometer) },
                 enabled = offlineOdometer.toDoubleOrNull()?.let { it.isFinite() && it >= shift.startOdometer && it <= 9_999_999 } == true,
@@ -299,10 +302,17 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
                     label = { Text("Odometer at home") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                val finalReading = endingOdometer.toDoubleOrNull()
+                val completionCheck = finalReading?.let {
+                    runCatching { OutingMileage.offlineForCompletion(shift.startOdometer, shift.offlineOdometer, it, offlineOdometer) }
+                }
+                completionCheck?.exceptionOrNull()?.message?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
                 BigButton(
-                    "SAVE FINAL ODOMETER — COMPLETE",
-                    { endingOdometer.toDoubleOrNull()?.let(vm::finishHomeArrival) },
-                    endingOdometer.toDoubleOrNull()?.let { it.isFinite() && it >= (shift.offlineOdometer ?: shift.startOdometer) && it <= 9_999_999 } == true,
+                    "SAVE READINGS — COMPLETE",
+                    { finalReading?.let { vm.finishHomeArrival(it, offlineOdometer) } },
+                    completionCheck?.isSuccess == true,
                 )
             }
         }
@@ -385,7 +395,7 @@ private fun FieldNationActiveCard(state: ShiftState, shift: ShiftEntity, materia
             }
             BigButton(
                 if (shift.roundTripExpected) "SAVE FINAL ODOMETER — COMPLETE" else "SAVE FINAL ODOMETER — COMPLETE",
-                { endingOdometer.toDoubleOrNull()?.let(vm::finishHomeArrival) },
+                { endingOdometer.toDoubleOrNull()?.let { vm.finishHomeArrival(it) } },
                 endingValue?.let { it >= shift.startOdometer } == true,
             )
         }
