@@ -1,6 +1,6 @@
 package com.midwestmanagedit.tracker.domain
 
-enum class Platform { LYFT, UBER, FIELD_NATION }
+enum class Platform { LYFT, UBER, FIELD_NATION, AMAZON_FLEX }
 enum class QueueMode { MANUAL, AUTO }
 
 enum class ShiftState {
@@ -9,6 +9,10 @@ enum class ShiftState {
     EN_ROUTE_PICKUP,
     PASSENGER,
     BREAK,
+    EN_ROUTE_STATION,
+    AT_STATION,
+    DELIVERING,
+    RETURNING_PACKAGES,
     EN_ROUTE_SITE,
     ON_SITE,
     WORKING,
@@ -44,6 +48,13 @@ enum class EventType {
     HOME_ARRIVED,
     ODOMETER_RECORDED,
     ARRIVAL_TIME_CORRECTED,
+    FLEX_TRIP_STARTED,
+    FLEX_ARRIVED_STATION,
+    FLEX_DELIVERIES_STARTED,
+    FLEX_DELIVERIES_FINISHED,
+    FLEX_PACKAGE_RETURN_STARTED,
+    FLEX_PACKAGE_RETURN_COMPLETED,
+    FLEX_RELEASED_NO_ROUTE,
     FN_TRIP_STARTED,
     FN_ARRIVED_SITE,
     FN_CHECKED_IN,

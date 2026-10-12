@@ -4,6 +4,9 @@ import com.midwestmanagedit.tracker.inventory.validateMaterialQuantity
 import com.midwestmanagedit.tracker.tracking.GpsHealth
 
 import androidx.room.withTransaction
+import com.midwestmanagedit.tracker.domain.FlexBlock
+import com.midwestmanagedit.tracker.domain.FlexAction
+import com.midwestmanagedit.tracker.domain.FlexWorkflow
 import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.EventType
@@ -60,7 +63,7 @@ class TrackerRepository(private val database: TrackerDatabase) {
         stamp: GeoStamp,
         startWithAcceptedRide: Boolean,
     ): String = database.withTransaction {
-        check(platform != Platform.FIELD_NATION) { "Use the FieldNation start workflow." }
+        check(platform in setOf(Platform.LYFT, Platform.UBER)) { "Use the FieldNation start workflow." }
         check(dao.activeShift() == null) { "Finish the existing shift first." }
 
         val shiftId = UUID.randomUUID().toString()
@@ -99,6 +102,38 @@ class TrackerRepository(private val database: TrackerDatabase) {
         }
 
         shiftId
+    }
+
+    suspend fun startFlex(block: FlexBlock, startOdometer: Double, stamp: GeoStamp) = database.withTransaction {
+        check(dao.activeShift() == null) { "Finish the existing outing first." }
+        OutingMileage.split(startOdometer, null, null)
+        val id = UUID.randomUUID().toString()
+        dao.insertShift(ShiftEntity(
+            id = id, platform = Platform.AMAZON_FLEX.name, state = ShiftState.EN_ROUTE_STATION.name,
+            queueMode = QueueMode.MANUAL.name, startedAtEpochMs = stamp.occurredAtEpochMs,
+            startOdometer = startOdometer, roundTripExpected = true,
+            flexStation = block.station.ifBlank { null }, flexBlockStartEpochMs = block.startEpochMs,
+            flexBlockEndEpochMs = block.endEpochMs, flexBlockPayCents = block.payCents,
+            createdAtEpochMs = System.currentTimeMillis(),
+        ))
+        event(id, null, EventType.SHIFT_STARTED, stamp, JSONObject()
+            .put("platform", Platform.AMAZON_FLEX.name).put("station", block.station)
+            .put("scheduledStartEpochMs", block.startEpochMs).put("scheduledEndEpochMs", block.endEpochMs)
+            .put("blockPayCents", block.payCents).toString())
+        event(id, null, EventType.FLEX_TRIP_STARTED, stamp)
+    }
+
+    suspend fun flexAction(action: FlexAction, stamp: GeoStamp) = database.withTransaction {
+        val shift = requireShift()
+        check(shift.platform == Platform.AMAZON_FLEX.name) { "This action requires a Flex outing." }
+        check(shift.homeArrivedAtEpochMs == null && stamp.occurredAtEpochMs >= shift.startedAtEpochMs)
+        val transition = FlexWorkflow.transition(ShiftState.valueOf(shift.state), action)
+        dao.updateShift(shift.copy(state = transition.state.name,
+            flexStationArrivedAtEpochMs = if (action == FlexAction.ARRIVE_STATION) stamp.occurredAtEpochMs else shift.flexStationArrivedAtEpochMs,
+            endedAtEpochMs = if (transition.workFinished) stamp.occurredAtEpochMs else null))
+        event(shift.id, null, transition.event, stamp)
+        if (action == FlexAction.RETURN_PACKAGES) event(shift.id, null, EventType.FLEX_DELIVERIES_FINISHED, stamp)
+        if (transition.workFinished) event(shift.id, null, EventType.SHIFT_ENDED, stamp)
     }
 
     suspend fun startOldestPending(stamp: GeoStamp) = database.withTransaction {

@@ -54,6 +54,10 @@ import com.midwestmanagedit.tracker.data.RideEntity
 import com.midwestmanagedit.tracker.data.ShiftEntity
 import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
+import com.midwestmanagedit.tracker.domain.FlexBlock
+import com.midwestmanagedit.tracker.ui.FlexStartFields
+import com.midwestmanagedit.tracker.ui.FlexActiveActions
+import com.midwestmanagedit.tracker.ui.FlexSummary
 import com.midwestmanagedit.tracker.domain.Platform
 import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.QueueMode
@@ -120,7 +124,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
         ) {
             Text("MMIT Work Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("Your field and driving work center", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-            Text("Offline-first • Rideshare + FieldNation • GPS saved locally")
+            Text("Offline-first • Rideshare + Flex + FieldNation")
             shift?.takeIf { it.homeArrivedAtEpochMs == null }?.let { GpsHealthCard(it.id, vm) }
             InventoryConnectionCard(vm)
             if (message != null) {
@@ -141,12 +145,13 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
 
 @Composable
 private fun StartShiftCard(vm: TrackerViewModel) {
-    var platform by remember { mutableStateOf(Platform.LYFT) }
+    var platform by rememberSaveable { mutableStateOf(Platform.LYFT) }
     var queueMode by remember { mutableStateOf(QueueMode.MANUAL) }
-    var odometer by remember { mutableStateOf("") }
+    var odometer by rememberSaveable { mutableStateOf("") }
     var firstRide by remember { mutableStateOf(false) }
     var workOrderNumber by remember { mutableStateOf("") }
     var roundTrip by remember { mutableStateOf(true) }
+    var flexBlock by remember { mutableStateOf<FlexBlock?>(null) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Start work outing", style = MaterialTheme.typography.titleLarge)
@@ -155,9 +160,12 @@ private fun StartShiftCard(vm: TrackerViewModel) {
                     Platform.LYFT -> "Lyft"
                     Platform.UBER -> "Uber"
                     Platform.FIELD_NATION -> "FN"
+                    Platform.AMAZON_FLEX -> "Flex"
                 }
             }
-            if (platform == Platform.FIELD_NATION) {
+            if (platform == Platform.AMAZON_FLEX) {
+                FlexStartFields { flexBlock = it }
+            } else if (platform == Platform.FIELD_NATION) {
                 OutlinedTextField(
                     value = workOrderNumber,
                     onValueChange = { workOrderNumber = it.trimStart() },
@@ -182,7 +190,7 @@ private fun StartShiftCard(vm: TrackerViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            if (platform != Platform.FIELD_NATION) {
+            if (platform in setOf(Platform.LYFT, Platform.UBER)) {
                 FilterChip(
                     selected = firstRide,
                     onClick = { firstRide = !firstRide },
@@ -192,7 +200,9 @@ private fun StartShiftCard(vm: TrackerViewModel) {
             Button(
                 onClick = {
                     odometer.toDoubleOrNull()?.let {
-                        if (platform == Platform.FIELD_NATION) {
+                        if (platform == Platform.AMAZON_FLEX) {
+                            flexBlock?.let { block -> vm.startFlex(block, it) }
+                        } else if (platform == Platform.FIELD_NATION) {
                             vm.startFieldNation(workOrderNumber, roundTrip, it)
                         } else {
                             vm.start(platform, queueMode, it, firstRide)
@@ -200,9 +210,10 @@ private fun StartShiftCard(vm: TrackerViewModel) {
                     }
                 },
                 enabled = odometer.toDoubleOrNull() != null &&
-                    (platform != Platform.FIELD_NATION || workOrderNumber.isNotBlank()),
+                    (platform != Platform.FIELD_NATION || workOrderNumber.isNotBlank()) &&
+                    (platform != Platform.AMAZON_FLEX || flexBlock != null),
                 modifier = Modifier.fillMaxWidth().height(58.dp),
-            ) { Text(if (platform == Platform.FIELD_NATION) "START TRIP TO SITE" else "START TRACKING") }
+            ) { Text(when (platform) { Platform.FIELD_NATION -> "START TRIP TO SITE"; Platform.AMAZON_FLEX -> "START TRIP TO PICKUP"; else -> "START TRACKING" }) }
         }
     }
 }
@@ -219,6 +230,10 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
     if (shift.platform == Platform.FIELD_NATION.name) {
         FieldNationActiveCard(state, shift, materials, vm)
         return
+    }
+    if (shift.platform == Platform.AMAZON_FLEX.name) {
+        FlexActiveActions(shift, vm)
+        if (state != ShiftState.RETURNING_HOME) return
     }
     if (state != ShiftState.RETURNING_HOME) {
         ChoiceRow("Queue mode", QueueMode.entries, mode, vm::queueMode) {
@@ -274,13 +289,13 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
         }
         ShiftState.BREAK -> BigButton("RESUME", { vm.breakMode(false) })
         ShiftState.RETURNING_HOME -> {
-            Text("Offline trip home is part of this outing's total miles, not extra mileage.")
+            Text("The trip home is part of this outing's total miles, not extra mileage.")
             Text(shift.offlineOdometer?.let { "Odometer when you went offline: $it" }
                 ?: "Optional: record the odometer from the moment you went offline for an exact mileage split. Enter it only while safely stopped; do not use a later reading.")
             OutlinedTextField(
                 value = offlineOdometer,
                 onValueChange = { offlineOdometer = it },
-                label = { Text("Odometer when you went offline") },
+                label = { Text(if (shift.platform == Platform.AMAZON_FLEX.name) "Odometer when all Flex work finished" else "Odometer when you went offline") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
             )
             Text("Your final save includes the offline reading entered here. You can also save it now.")
@@ -324,6 +339,10 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
         }
         ShiftState.IDLE,
         ShiftState.COMPLETE,
+        ShiftState.EN_ROUTE_STATION,
+        ShiftState.AT_STATION,
+        ShiftState.DELIVERING,
+        ShiftState.RETURNING_PACKAGES,
         ShiftState.EN_ROUTE_SITE,
         ShiftState.ON_SITE,
         ShiftState.WORKING,
@@ -433,7 +452,8 @@ private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewMode
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(label, fontWeight = FontWeight.Bold, color = if (shift.platform == Platform.FIELD_NATION.name) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
                         Text("${miles?.let { "%.1f miles".format(it) } ?: "miles pending"} • ${if (shift.roundTripExpected) "round trip" else "completed outing"}")
-                        if (shift.platform != Platform.FIELD_NATION.name) {
+                        if (shift.platform == Platform.AMAZON_FLEX.name) FlexSummary(shift)
+                        if (shift.platform in setOf(Platform.LYFT.name, Platform.UBER.name)) {
                             Text("Total includes the offline trip home.")
                             val offlineReading = shift.offlineOdometer
                             val finalReading = shift.endOdometer
@@ -471,7 +491,7 @@ private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewMode
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }, "Export ${label} data"))
                             }
-                        }, modifier = Modifier.fillMaxWidth()) { Text("Export JSON for OPS") }
+                        }, modifier = Modifier.fillMaxWidth()) { Text(if (shift.platform == Platform.AMAZON_FLEX.name) "Share Flex record (JSON)" else "Export JSON for OPS") }
                     }
                 }
             }
@@ -488,7 +508,7 @@ private fun StatusCard(state: ShiftState, shift: ShiftEntity, pending: Int) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(state.name.replace('_', ' '), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("${shift.platform.replace('_', ' ')} • started at ${shift.startOdometer}")
-            if (shift.platform != Platform.FIELD_NATION.name) {
+            if (shift.platform in setOf(Platform.LYFT.name, Platform.UBER.name)) {
                 Text("Pending queue: $pending", color = if (pending > 0) Color(0xFF9A6700) else Color.Unspecified)
             }
         }

@@ -19,6 +19,8 @@ import com.midwestmanagedit.tracker.data.ShiftEntity
 import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
 import com.midwestmanagedit.tracker.data.TrackerRepository
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
+import com.midwestmanagedit.tracker.domain.FlexBlock
+import com.midwestmanagedit.tracker.domain.FlexAction
 import com.midwestmanagedit.tracker.domain.Platform
 import com.midwestmanagedit.tracker.domain.QueueMode
 import com.midwestmanagedit.tracker.tracking.LocationMemory
@@ -123,6 +125,15 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         repository.startShift(platform, queueMode, odometer, LocationMemory.stamp(), firstRide)
         startTrackingService()
     }
+
+    fun startFlex(block: FlexBlock, odometer: Double) = act {
+        requireLocation()
+        LocationMemory.clear()
+        repository.startFlex(block, odometer, LocationMemory.stamp())
+        startTrackingService()
+    }
+
+    fun flexAction(action: FlexAction) = act { repository.flexAction(action, LocationMemory.stamp()) }
 
     fun startFieldNation(workOrderNumber: String, roundTrip: Boolean, odometer: Double) = act {
         requireLocation()

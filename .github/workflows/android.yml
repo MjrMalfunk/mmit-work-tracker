@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - feature/amazon-flex-tracking-20261012
   pull_request:
     branches:
       - master

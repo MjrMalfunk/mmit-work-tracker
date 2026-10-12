@@ -102,6 +102,18 @@ class ShiftExporter(
                 }
             })
 
+        if (bundle.shift.platform == "AMAZON_FLEX") {
+            val shift = bundle.shift
+            root.put("flexBlock", JSONObject()
+                .put("version", 1).put("station", shift.flexStation ?: JSONObject.NULL)
+                .put("scheduledStartEpochMs", shift.flexBlockStartEpochMs ?: JSONObject.NULL)
+                .put("scheduledEndEpochMs", shift.flexBlockEndEpochMs ?: JSONObject.NULL)
+                .put("offeredPayCents", shift.flexBlockPayCents ?: JSONObject.NULL)
+                .put("paySource", "DRIVER_ENTERED_OFFER")
+                .put("stationArrivedAtEpochMs", shift.flexStationArrivedAtEpochMs ?: JSONObject.NULL)
+                .put("actualWorkFinishedAtEpochMs", shift.endedAtEpochMs ?: JSONObject.NULL)
+                .put("actualFinishIncludesRequiredReturns", true))
+        }
         if (bundle.shift.platform != "FIELD_NATION") {
             root.put("mileageSummary", GigMileageSummary.build(bundle.shift, points, events))
         }
