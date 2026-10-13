@@ -1,5 +1,12 @@
 # MMIT Work Tracker
 
+## v0.7.1 Flex outcomes
+
+- **Released — no route:** retains expected block pay after station arrival.
+- **Canceled / pulled (unpaid):** records a reason and support notes, with expected pay of $0 while preserving outbound, waiting, and return mileage/time.
+- **Confirm actual Flex pay:** updates a completed block or a successful appeal without changing the original offer.
+- Room 6→7 preserves existing outings and backfills old no-route releases from their saved events. Flex JSON includes outcome, cancellation details, and separately confirmed pay.
+
 Offline-first Android ride tracker for Midwest Managed IT's Gig Work workflow.
 
 ## MVP scope

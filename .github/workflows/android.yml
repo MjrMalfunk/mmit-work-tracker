@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - feature/amazon-flex-tracking-20261012
+      - feature/flex-cancellation-20261013
   pull_request:
     branches:
       - master

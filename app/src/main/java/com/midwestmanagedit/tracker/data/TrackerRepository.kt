@@ -7,6 +7,8 @@ import androidx.room.withTransaction
 import com.midwestmanagedit.tracker.domain.FlexBlock
 import com.midwestmanagedit.tracker.domain.FlexAction
 import com.midwestmanagedit.tracker.domain.FlexWorkflow
+import com.midwestmanagedit.tracker.domain.FlexOutcome
+import com.midwestmanagedit.tracker.domain.FlexCancellationReason
 import com.midwestmanagedit.tracker.domain.OutingMileage
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.EventType
@@ -123,17 +125,41 @@ class TrackerRepository(private val database: TrackerDatabase) {
         event(id, null, EventType.FLEX_TRIP_STARTED, stamp)
     }
 
-    suspend fun flexAction(action: FlexAction, stamp: GeoStamp) = database.withTransaction {
+    suspend fun flexAction(action: FlexAction, stamp: GeoStamp, cancellationReason: FlexCancellationReason? = null, cancellationNote: String? = null) = database.withTransaction {
         val shift = requireShift()
         check(shift.platform == Platform.AMAZON_FLEX.name) { "This action requires a Flex outing." }
         check(shift.homeArrivedAtEpochMs == null && stamp.occurredAtEpochMs >= shift.startedAtEpochMs)
         val transition = FlexWorkflow.transition(ShiftState.valueOf(shift.state), action)
+        val cancelling = action == FlexAction.CANCEL_BLOCK
+        require(!cancelling || cancellationReason != null) { "Choose a cancellation reason." }
+        val note = cancellationNote?.trim()?.ifBlank { null }
+        require(note == null || note.length <= 2000) { "Keep the cancellation note under 2,000 characters." }
+        val outcome = when {
+            cancelling -> FlexOutcome.CANCELLED.name
+            action == FlexAction.RELEASE_NO_ROUTE -> FlexOutcome.RELEASED_NO_ROUTE.name
+            transition.workFinished -> FlexOutcome.COMPLETED.name
+            else -> shift.flexOutcome
+        }
         dao.updateShift(shift.copy(state = transition.state.name,
             flexStationArrivedAtEpochMs = if (action == FlexAction.ARRIVE_STATION) stamp.occurredAtEpochMs else shift.flexStationArrivedAtEpochMs,
-            endedAtEpochMs = if (transition.workFinished) stamp.occurredAtEpochMs else null))
-        event(shift.id, null, transition.event, stamp)
+            endedAtEpochMs = if (transition.workFinished) stamp.occurredAtEpochMs else null,
+            flexOutcome = outcome,
+            flexCancellationReason = if (cancelling) cancellationReason?.name else shift.flexCancellationReason,
+            flexCancellationNote = if (cancelling) note else shift.flexCancellationNote))
+        val payload = if (cancelling) JSONObject().put("reason", cancellationReason!!.name)
+            .put("note", note ?: JSONObject.NULL).put("expectedPayCents", 0).toString() else "{}"
+        event(shift.id, null, transition.event, stamp, payload)
         if (action == FlexAction.RETURN_PACKAGES) event(shift.id, null, EventType.FLEX_DELIVERIES_FINISHED, stamp)
         if (transition.workFinished) event(shift.id, null, EventType.SHIFT_ENDED, stamp)
+    }
+
+    suspend fun confirmFlexPay(shiftId: String, cents: Long?, stamp: GeoStamp) = database.withTransaction {
+        val shift = dao.shift(shiftId) ?: error("Outing not found.")
+        check(shift.platform == Platform.AMAZON_FLEX.name && shift.endedAtEpochMs != null) { "Finish the Flex block before confirming its pay." }
+        require(cents == null || cents in 0..1_000_000L) { "Enter an amount from $0 to $10,000." }
+        dao.updateShift(shift.copy(flexConfirmedPayCents = cents))
+        event(shift.id, null, EventType.FLEX_PAY_CONFIRMED, stamp,
+            JSONObject().put("confirmedPayCents", cents ?: JSONObject.NULL).toString())
     }
 
     suspend fun startOldestPending(stamp: GeoStamp) = database.withTransaction {

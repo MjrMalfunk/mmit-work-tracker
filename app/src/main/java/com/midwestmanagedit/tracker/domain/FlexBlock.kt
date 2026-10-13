@@ -32,7 +32,29 @@ data class FlexBlock(val station: String, val startEpochMs: Long, val endEpochMs
     }
 }
 
-enum class FlexAction { ARRIVE_STATION, START_DELIVERIES, FINISH_DELIVERIES, RETURN_PACKAGES, FINISH_RETURN, RELEASE_NO_ROUTE }
+enum class FlexAction { ARRIVE_STATION, START_DELIVERIES, FINISH_DELIVERIES, RETURN_PACKAGES, FINISH_RETURN, RELEASE_NO_ROUTE, CANCEL_BLOCK }
+
+enum class FlexOutcome { COMPLETED, RELEASED_NO_ROUTE, CANCELLED }
+
+enum class FlexCancellationReason(val label: String) {
+    CHECK_IN_ISSUE("Check-in issue / marked late"),
+    CANCELLED_BY_AMAZON("Shift canceled or pulled by Amazon"),
+    OTHER("Other"),
+}
+
+/** Offered pay is retained for audit; an unpaid cancellation must not inherit that pay. */
+object FlexPay {
+    fun amountCents(offeredPayCents: Long?, outcome: String?, confirmedPayCents: Long?): Long? =
+        confirmedPayCents ?: if (outcome == FlexOutcome.CANCELLED.name) 0L else offeredPayCents
+
+    fun parseConfirmedPay(value: String): Long? {
+        if (value.isBlank()) return null
+        val cents = try { BigDecimal(value.trim()).movePointRight(2).longValueExact() }
+            catch (_: Exception) { throw IllegalArgumentException("Enter an amount with up to two decimal places.") }
+        require(cents in 0..1_000_000L) { "Enter an amount from $0 to $10,000." }
+        return cents
+    }
+}
 
 object FlexWorkflow {
     data class Transition(val state: ShiftState, val event: EventType, val workFinished: Boolean = false)
@@ -43,5 +65,9 @@ object FlexWorkflow {
         FlexAction.RETURN_PACKAGES -> { require(state == ShiftState.DELIVERING); Transition(ShiftState.RETURNING_PACKAGES, EventType.FLEX_PACKAGE_RETURN_STARTED) }
         FlexAction.FINISH_RETURN -> { require(state == ShiftState.RETURNING_PACKAGES); Transition(ShiftState.RETURNING_HOME, EventType.FLEX_PACKAGE_RETURN_COMPLETED, true) }
         FlexAction.RELEASE_NO_ROUTE -> { require(state == ShiftState.AT_STATION); Transition(ShiftState.RETURNING_HOME, EventType.FLEX_RELEASED_NO_ROUTE, true) }
+        FlexAction.CANCEL_BLOCK -> {
+            require(state == ShiftState.EN_ROUTE_STATION || state == ShiftState.AT_STATION)
+            Transition(ShiftState.RETURNING_HOME, EventType.FLEX_BLOCK_CANCELLED, true)
+        }
     }
 }

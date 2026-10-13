@@ -452,7 +452,7 @@ private fun CompletedOutingsCard(outings: List<ShiftEntity>, vm: TrackerViewMode
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(label, fontWeight = FontWeight.Bold, color = if (shift.platform == Platform.FIELD_NATION.name) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
                         Text("${miles?.let { "%.1f miles".format(it) } ?: "miles pending"} • ${if (shift.roundTripExpected) "round trip" else "completed outing"}")
-                        if (shift.platform == Platform.AMAZON_FLEX.name) FlexSummary(shift)
+                        if (shift.platform == Platform.AMAZON_FLEX.name) FlexSummary(shift) { cents -> vm.confirmFlexPay(shift.id, cents) }
                         if (shift.platform in setOf(Platform.LYFT.name, Platform.UBER.name)) {
                             Text("Total includes the offline trip home.")
                             val offlineReading = shift.offlineOdometer

@@ -58,4 +58,31 @@ class FlexBlockTest {
         assertTrue(runCatching { FlexWorkflow.transition(ShiftState.RETURNING_HOME, FlexAction.FINISH_RETURN) }.isFailure)
         assertTrue(runCatching { FlexWorkflow.transition(ShiftState.DELIVERING, FlexAction.ARRIVE_STATION) }.isFailure)
     }
+
+    @Test fun cancellationKeepsReturnTripAndCannotReplaceAnActiveDelivery() {
+        for (state in listOf(ShiftState.EN_ROUTE_STATION, ShiftState.AT_STATION)) {
+            val cancelled = FlexWorkflow.transition(state, FlexAction.CANCEL_BLOCK)
+            assertEquals(ShiftState.RETURNING_HOME, cancelled.state)
+            assertEquals(EventType.FLEX_BLOCK_CANCELLED, cancelled.event)
+            assertTrue(cancelled.workFinished)
+        }
+        for (state in listOf(ShiftState.DELIVERING, ShiftState.RETURNING_PACKAGES, ShiftState.RETURNING_HOME, ShiftState.COMPLETE)) {
+            assertTrue(runCatching { FlexWorkflow.transition(state, FlexAction.CANCEL_BLOCK) }.isFailure)
+        }
+    }
+
+    @Test fun unpaidCancellationDoesNotInheritOfferedPayAndConfirmedAppealCanOverride() {
+        assertEquals(7900L, FlexPay.amountCents(7900L, FlexOutcome.RELEASED_NO_ROUTE.name, null))
+        assertEquals(0L, FlexPay.amountCents(7900L, FlexOutcome.CANCELLED.name, null))
+        assertEquals(7900L, FlexPay.amountCents(7900L, FlexOutcome.CANCELLED.name, 7900L))
+        assertEquals(0L, FlexPay.amountCents(7900L, FlexOutcome.RELEASED_NO_ROUTE.name, 0L))
+        assertEquals(7900L, FlexPay.amountCents(7900L, FlexOutcome.COMPLETED.name, null))
+    }
+
+    @Test fun confirmedPayKeepsExactCentsAndRejectsInvalidAmounts() {
+        assertNull(FlexPay.parseConfirmedPay(""))
+        assertEquals(0L, FlexPay.parseConfirmedPay("0"))
+        assertEquals(7901L, FlexPay.parseConfirmedPay("79.01"))
+        for (value in listOf("-1", "79.001", "NaN", "10000.01")) assertTrue(runCatching { FlexPay.parseConfirmedPay(value) }.isFailure)
+    }
 }
