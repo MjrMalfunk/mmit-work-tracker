@@ -102,6 +102,24 @@ class ShiftExporter(
                 }
             })
 
+        if (bundle.shift.platform == "AMAZON_FLEX") {
+            val shift = bundle.shift
+            root.put("flexBlock", JSONObject()
+                .put("version", 2).put("station", shift.flexStation ?: JSONObject.NULL)
+                .put("scheduledStartEpochMs", shift.flexBlockStartEpochMs ?: JSONObject.NULL)
+                .put("scheduledEndEpochMs", shift.flexBlockEndEpochMs ?: JSONObject.NULL)
+                .put("offeredPayCents", shift.flexBlockPayCents ?: JSONObject.NULL)
+                .put("paySource", "DRIVER_ENTERED_OFFER")
+                .put("outcome", shift.flexOutcome ?: JSONObject.NULL)
+                .put("cancellationReason", shift.flexCancellationReason ?: JSONObject.NULL)
+                .put("cancellationNote", shift.flexCancellationNote ?: JSONObject.NULL)
+                .put("confirmedPayCents", shift.flexConfirmedPayCents ?: JSONObject.NULL)
+                .put("effectivePayCents", com.midwestmanagedit.tracker.domain.FlexPay.amountCents(shift.flexBlockPayCents, shift.flexOutcome, shift.flexConfirmedPayCents) ?: JSONObject.NULL)
+                .put("effectivePaySource", if (shift.flexConfirmedPayCents != null) "DRIVER_CONFIRMED_PAYOUT" else if (shift.flexOutcome == "CANCELLED") "UNPAID_CANCELLATION" else "DRIVER_ENTERED_OFFER")
+                .put("stationArrivedAtEpochMs", shift.flexStationArrivedAtEpochMs ?: JSONObject.NULL)
+                .put("actualWorkFinishedAtEpochMs", shift.endedAtEpochMs ?: JSONObject.NULL)
+                .put("actualFinishIncludesRequiredReturns", true))
+        }
         if (bundle.shift.platform != "FIELD_NATION") {
             root.put("mileageSummary", GigMileageSummary.build(bundle.shift, points, events))
         }

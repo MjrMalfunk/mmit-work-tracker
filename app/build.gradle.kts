@@ -25,8 +25,8 @@ android {
         applicationId = "com.midwestmanagedit.tracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "0.6.8"
+        versionCode = 17
+        versionName = "0.7.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

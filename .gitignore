@@ -1,0 +1,11 @@
+# Generated Android output and local machine configuration.
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+.idea/
+*.iml
