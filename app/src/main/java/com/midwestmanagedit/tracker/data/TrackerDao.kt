@@ -65,6 +65,18 @@ interface TrackerDao {
     @Query("SELECT * FROM tracking_events WHERE shiftId = :shiftId ORDER BY occurredAtEpochMs, rowid")
     suspend fun events(shiftId: String): List<TrackingEventEntity>
 
+    @Query("""
+        SELECT tracking_events.* FROM tracking_events
+        INNER JOIN shifts ON shifts.id = tracking_events.shiftId
+        WHERE tracking_events.type = 'HOME_ARRIVED'
+          AND tracking_events.latitude IS NOT NULL
+          AND tracking_events.longitude IS NOT NULL
+          AND shifts.state = 'COMPLETE'
+        ORDER BY tracking_events.occurredAtEpochMs DESC
+        LIMIT 1
+    """)
+    fun observeLatestSavedHomeArrival(): Flow<TrackingEventEntity?>
+
     @Query("UPDATE tracking_events SET payloadJson = :payloadJson WHERE shiftId = :shiftId AND type = 'SHIFT_STARTED'")
     suspend fun updateShiftStartedPayload(shiftId: String, payloadJson: String)
 

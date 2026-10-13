@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.content.Intent
+import android.net.Uri
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -53,6 +54,7 @@ import androidx.core.content.FileProvider
 import com.midwestmanagedit.tracker.data.RideEntity
 import com.midwestmanagedit.tracker.data.ShiftEntity
 import com.midwestmanagedit.tracker.data.ShiftMaterialUsageEntity
+import com.midwestmanagedit.tracker.data.TrackingEventEntity
 import com.midwestmanagedit.tracker.domain.AcquisitionMode
 import com.midwestmanagedit.tracker.domain.FlexBlock
 import com.midwestmanagedit.tracker.ui.FlexStartFields
@@ -99,6 +101,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
     val pending by vm.pendingRides.collectAsState()
     val materials by vm.materialUsage.collectAsState()
     val completed by vm.completedOutings.collectAsState()
+    val savedHomeArrival by vm.latestSavedHomeArrival.collectAsState()
     val message by vm.message.collectAsState()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -138,7 +141,7 @@ private fun TrackerApp(vm: TrackerViewModel = viewModel()) {
             if (shift == null) {
                 StartShiftCard(vm)
                 if (completed.isNotEmpty()) CompletedOutingsCard(completed, vm)
-            } else ActiveShiftCard(shift!!, pending, materials, vm)
+            } else ActiveShiftCard(shift!!, pending, materials, savedHomeArrival, vm)
         }
     }
 }
@@ -219,7 +222,13 @@ private fun StartShiftCard(vm: TrackerViewModel) {
 }
 
 @Composable
-private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, materials: List<ShiftMaterialUsageEntity>, vm: TrackerViewModel) {
+private fun ActiveShiftCard(
+    shift: ShiftEntity,
+    pending: List<RideEntity>,
+    materials: List<ShiftMaterialUsageEntity>,
+    savedHomeArrival: TrackingEventEntity?,
+    vm: TrackerViewModel,
+) {
     val state = ShiftState.valueOf(shift.state)
     val mode = QueueMode.valueOf(shift.queueMode)
     var endingOdometer by rememberSaveable(shift.id) { mutableStateOf("") }
@@ -290,6 +299,22 @@ private fun ActiveShiftCard(shift: ShiftEntity, pending: List<RideEntity>, mater
         ShiftState.BREAK -> BigButton("RESUME", { vm.breakMode(false) })
         ShiftState.RETURNING_HOME -> {
             Text("The trip home is part of this outing's total miles, not extra mileage.")
+            if (shift.platform == Platform.AMAZON_FLEX.name && shift.homeArrivedAtEpochMs == null) {
+                val context = LocalContext.current
+                if (savedHomeArrival?.latitude != null && savedHomeArrival.longitude != null) {
+                    Text("Open Maps for a fresh drive estimate from your current location to your last saved home point.")
+                    OutlinedButton(
+                        onClick = {
+                            val destination = "${savedHomeArrival.latitude},${savedHomeArrival.longitude}"
+                            val uri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving")
+                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("OPEN MAPS ROUTE HOME") }
+                } else {
+                    Text("Your home point will be available after the first outing is completed at home.")
+                }
+            }
             Text(shift.offlineOdometer?.let { "Odometer when you went offline: $it" }
                 ?: "Optional: record the odometer from the moment you went offline for an exact mileage split. Enter it only while safely stopped; do not use a later reading.")
             OutlinedTextField(

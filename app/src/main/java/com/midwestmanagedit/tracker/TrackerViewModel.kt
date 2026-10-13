@@ -115,6 +115,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     val latestCompleted: StateFlow<ShiftEntity?> = repository.observeLatestCompletedShift()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val latestSavedHomeArrival = repository.observeLatestSavedHomeArrival()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val completedOutings: StateFlow<List<ShiftEntity>> = repository.observeCompletedShifts(500)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
