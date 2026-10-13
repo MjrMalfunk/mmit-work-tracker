@@ -2,21 +2,30 @@ package com.midwestmanagedit.tracker.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.midwestmanagedit.tracker.TrackerViewModel
 import com.midwestmanagedit.tracker.data.ShiftEntity
 import com.midwestmanagedit.tracker.domain.FlexBlock
 import com.midwestmanagedit.tracker.domain.FlexAction
+import com.midwestmanagedit.tracker.domain.FlexCancellationReason
+import com.midwestmanagedit.tracker.domain.FlexOutcome
+import com.midwestmanagedit.tracker.domain.FlexPay
 import com.midwestmanagedit.tracker.domain.ShiftState
 import java.time.LocalDate
 import java.text.DateFormat
@@ -49,14 +58,17 @@ fun FlexStartFields(onBlock: (FlexBlock?) -> Unit) {
 @Composable
 fun FlexActiveActions(shift: ShiftEntity, vm: TrackerViewModel) {
     val state = ShiftState.valueOf(shift.state)
-    FlexSummary(shift)
+    var showCancellation by rememberSaveable(shift.id) { mutableStateOf(false) }
+    var reason by rememberSaveable(shift.id) { mutableStateOf("") }
+    var note by rememberSaveable(shift.id) { mutableStateOf("") }
+    FlexSummary(shift) { cents -> vm.confirmFlexPay(shift.id, cents) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (state) {
             ShiftState.EN_ROUTE_STATION -> Button({ vm.flexAction(FlexAction.ARRIVE_STATION) }, Modifier.fillMaxWidth()) { Text("ARRIVED AT PICKUP STATION") }
             ShiftState.AT_STATION -> {
                 Text("Station wait and loading time are included in actual work time.")
                 Button({ vm.flexAction(FlexAction.START_DELIVERIES) }, Modifier.fillMaxWidth()) { Text("LOADED — START DELIVERIES") }
-                OutlinedButton({ vm.flexAction(FlexAction.RELEASE_NO_ROUTE) }, Modifier.fillMaxWidth()) { Text("Released without a route") }
+                OutlinedButton({ vm.flexAction(FlexAction.RELEASE_NO_ROUTE) }, Modifier.fillMaxWidth()) { Text("Released — no route (block pay expected)") }
             }
             ShiftState.DELIVERING -> {
                 Text("No need to log each package. Mark the end of the route when safely stopped.")
@@ -69,33 +81,103 @@ fun FlexActiveActions(shift: ShiftEntity, vm: TrackerViewModel) {
             }
             else -> Unit
         }
+        if (state == ShiftState.EN_ROUTE_STATION || state == ShiftState.AT_STATION) {
+            OutlinedButton({ showCancellation = true }, Modifier.fillMaxWidth()) { Text("Canceled / pulled (unpaid)") }
+        }
     }
+    if (showCancellation) AlertDialog(
+        onDismissRequest = { showCancellation = false },
+        title = { Text("Record an unpaid cancellation") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Travel time and mileage stay in this outing. Expected pay will be $0 unless a payout is later confirmed.")
+                Text("If the station sent you home because no route was available, use Released — no route instead.")
+                FlexCancellationReason.entries.forEach { option ->
+                    Row(Modifier.fillMaxWidth().selectable(selected = reason == option.name, role = Role.RadioButton, onClick = { reason = option.name })) {
+                        RadioButton(selected = reason == option.name, onClick = null)
+                        Text(option.label, modifier = Modifier.weight(1f))
+                    }
+                }
+                OutlinedTextField(note, { note = it.take(2000) }, label = { Text("Notes / support case (optional)") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = reason.isNotBlank(), onClick = {
+                vm.cancelFlex(FlexCancellationReason.valueOf(reason), note)
+                showCancellation = false
+            }) { Text("Record cancellation") }
+        },
+        dismissButton = { TextButton({ showCancellation = false }) { Text("Keep tracking") } },
+    )
 }
 
 @Composable
-fun FlexSummary(shift: ShiftEntity) {
+private fun FlexPayEditor(shift: ShiftEntity, onConfirmPay: (Long?) -> Unit) {
+    var show by rememberSaveable(shift.id) { mutableStateOf(false) }
+    var amount by rememberSaveable(shift.id, shift.flexConfirmedPayCents) {
+        mutableStateOf(shift.flexConfirmedPayCents?.let { "%.2f".format(java.util.Locale.US, it / 100.0) }.orEmpty())
+    }
+    val parsed = remember(amount) { runCatching { FlexPay.parseConfirmedPay(amount) } }
+    OutlinedButton({ show = true }, Modifier.fillMaxWidth()) { Text(if (shift.flexConfirmedPayCents == null) "Confirm actual Flex pay" else "Update confirmed Flex pay") }
+    if (show) AlertDialog(
+        onDismissRequest = { show = false },
+        title = { Text("Actual Flex pay") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Enter the amount shown in your Flex earnings. Keep an appeal unpaid until payment is confirmed. Leave blank to clear a previous confirmation.")
+                OutlinedTextField(amount, { amount = it }, label = { Text("Confirmed pay ($)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                parsed.exceptionOrNull()?.let { Text(it.message.orEmpty(), color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { TextButton(enabled = parsed.isSuccess, onClick = { onConfirmPay(parsed.getOrNull()); show = false }) { Text("Save pay") } },
+        dismissButton = { TextButton({ show = false }) { Text("Back") } },
+    )
+}
+
+@Composable
+fun FlexSummary(shift: ShiftEntity, onConfirmPay: ((Long?) -> Unit)? = null) {
     shift.flexStation?.let { Text("Pickup: $it") }
+    val outcome = shift.flexOutcome
+    val cancelled = outcome == FlexOutcome.CANCELLED.name
+    val pay = FlexPay.amountCents(shift.flexBlockPayCents, outcome, shift.flexConfirmedPayCents)
+    val payLabel = if (shift.flexConfirmedPayCents != null) "Confirmed pay" else if (cancelled) "Expected pay (unpaid)" else "Expected block pay"
+    when (outcome) {
+        FlexOutcome.CANCELLED.name -> Text("Canceled / pulled", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+        FlexOutcome.RELEASED_NO_ROUTE.name -> Text("Released without a route", fontWeight = FontWeight.Bold)
+        FlexOutcome.COMPLETED.name -> Text("Route completed", fontWeight = FontWeight.Bold)
+    }
+    shift.flexCancellationReason?.let { saved ->
+        Text(FlexCancellationReason.entries.firstOrNull { it.name == saved }?.label ?: saved)
+    }
+    shift.flexCancellationNote?.let { Text(it) }
     val start = shift.flexBlockStartEpochMs
     val end = shift.flexBlockEndEpochMs
-    val pay = shift.flexBlockPayCents
-    if (start != null && end != null && pay != null) {
+    val offered = shift.flexBlockPayCents
+    if (start != null && end != null && offered != null && pay != null) {
         val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
         Text("Scheduled: ${format.format(Date(start))} — ${format.format(Date(end))}")
-        Text("Offered block pay: $%.2f • $%.2f/hr scheduled".format(pay / 100.0, FlexBlock.hourly(pay, end - start)), fontWeight = FontWeight.Bold)
+        Text("Original offer: $%.2f".format(offered / 100.0))
+        Text("$payLabel: $%.2f".format(pay / 100.0), fontWeight = FontWeight.Bold)
+        if (!cancelled) Text("$%.2f/hr scheduled".format(FlexBlock.hourly(pay, end - start)))
         val arrived = shift.flexStationArrivedAtEpochMs
         val finished = shift.endedAtEpochMs
         if (arrived != null && finished != null) {
-            Text("Actual station-to-finish: %.0f min (includes loading and required returns)".format((finished - arrived) / 60_000.0))
-            FlexBlock.hourly(pay, finished - arrived)?.let { Text("Offered pay / actual work: $%.2f/hr".format(it)) }
+            Text("Actual station time: %.0f min (includes waiting and any route / required returns)".format((finished - arrived) / 60_000.0))
+            FlexBlock.hourly(pay, finished - arrived)?.let { Text("$payLabel / actual work: $%.2f/hr".format(it)) }
         }
         val home = shift.correctedHomeArrivedAtEpochMs ?: shift.homeArrivedAtEpochMs
         if (home != null) {
             Text("Door-to-door: %.0f min".format((home - shift.startedAtEpochMs) / 60_000.0))
-            FlexBlock.hourly(pay, home - shift.startedAtEpochMs)?.let { Text("Offered pay / door-to-door: $%.2f/hr gross".format(it)) }
+            FlexBlock.hourly(pay, home - shift.startedAtEpochMs)?.let { Text("$payLabel / door-to-door: $%.2f/hr gross".format(it)) }
         }
         shift.endOdometer?.minus(shift.startOdometer)?.takeIf { it > 0 }?.let {
-            Text("Offered pay / total outing miles: $%.2f/mi gross".format(pay / 100.0 / it))
+            Text("$payLabel / total outing miles: $%.2f/mi gross".format(pay / 100.0 / it))
         }
-        Text("Offered pay is not confirmed payout or profit. Review final pay, tips and costs in OPS.", style = MaterialTheme.typography.bodySmall)
+        Text(when {
+            shift.flexConfirmedPayCents != null -> "Confirmed gross pay. Review tips and vehicle costs in OPS for final profit."
+            cancelled -> "No pay recorded for this cancellation. Update actual pay if your appeal results in payment."
+            else -> "Block pay is expected, not confirmed payout or profit. Confirm actual pay when it appears in Flex earnings."
+        }, style = MaterialTheme.typography.bodySmall)
+        if (shift.endedAtEpochMs != null && onConfirmPay != null) FlexPayEditor(shift, onConfirmPay)
     }
 }

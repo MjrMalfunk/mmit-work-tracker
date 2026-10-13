@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocationPointEntity::class,
         ShiftMaterialUsageEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class TrackerDatabase : RoomDatabase() {
@@ -29,9 +29,20 @@ abstract class TrackerDatabase : RoomDatabase() {
                 context.applicationContext,
                 TrackerDatabase::class.java,
                 "mmit-tracker.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 .also { instance = it }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE shifts ADD COLUMN flexOutcome TEXT")
+                db.execSQL("ALTER TABLE shifts ADD COLUMN flexCancellationReason TEXT")
+                db.execSQL("ALTER TABLE shifts ADD COLUMN flexCancellationNote TEXT")
+                db.execSQL("ALTER TABLE shifts ADD COLUMN flexConfirmedPayCents INTEGER")
+                // Existing releases keep their offered pay; active outings stay active.
+                db.execSQL("UPDATE shifts SET flexOutcome = CASE WHEN EXISTS (SELECT 1 FROM tracking_events WHERE shiftId = shifts.id AND type = 'FLEX_RELEASED_NO_ROUTE') THEN 'RELEASED_NO_ROUTE' WHEN endedAtEpochMs IS NOT NULL THEN 'COMPLETED' ELSE NULL END WHERE platform = 'AMAZON_FLEX'")
+            }
         }
 
         val MIGRATION_5_6 = object : Migration(5, 6) {

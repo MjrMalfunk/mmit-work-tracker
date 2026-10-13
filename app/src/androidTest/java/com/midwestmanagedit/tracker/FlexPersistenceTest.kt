@@ -38,7 +38,7 @@ class FlexPersistenceTest {
             db.execSQL("INSERT INTO shifts (id,platform,state,queueMode,startedAtEpochMs,startOdometer,endOdometer,offlineOdometer,completedAtEpochMs,roundTripExpected,createdAtEpochMs) VALUES ('legacy','LYFT','COMPLETE','MANUAL',1000,85943,86217,86202,2000,0,1000)")
             db.version = 5
         }
-        val db = Room.databaseBuilder(context, TrackerDatabase::class.java, name).addMigrations(TrackerDatabase.MIGRATION_5_6).build()
+        val db = Room.databaseBuilder(context, TrackerDatabase::class.java, name).addMigrations(TrackerDatabase.MIGRATION_5_6, TrackerDatabase.MIGRATION_6_7).build()
         try {
             val legacy = db.trackerDao().shift("legacy")!!
             assertEquals(85943.0, legacy.startOdometer, 0.0)
@@ -79,6 +79,75 @@ class FlexPersistenceTest {
         } finally { db.close() }
     }
 
+    @Test fun unpaidCancellationAndConfirmedAppealPersistWithAllTravel() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, TrackerDatabase::class.java).build()
+        try {
+            val repo = TrackerRepository(db)
+            repo.startFlex(block, 1000.0, stamp(0))
+            val id = repo.dao.activeShift()!!.id
+            repo.flexAction(FlexAction.ARRIVE_STATION, stamp(5))
+            assertTrue(runCatching { repo.flexAction(FlexAction.CANCEL_BLOCK, stamp(35)) }.isFailure)
+            assertNull(repo.dao.shift(id)!!.endedAtEpochMs)
+            repo.flexAction(FlexAction.CANCEL_BLOCK, stamp(35), FlexCancellationReason.CHECK_IN_ISSUE, "Support appeal pending")
+            repo.lockHomeArrival(id, stamp(40))
+            repo.finishHomeArrival(id, 1010.0, "1005")
+            val shift = repo.dao.shift(id)!!
+            assertEquals("COMPLETE", shift.state)
+            assertEquals("CANCELLED", shift.flexOutcome)
+            assertEquals("CHECK_IN_ISSUE", shift.flexCancellationReason)
+            assertEquals("Support appeal pending", shift.flexCancellationNote)
+            assertEquals(7900L, shift.flexBlockPayCents)
+            assertNull(shift.flexConfirmedPayCents)
+            val export = ShiftExporter(context, repo).export(id)
+            try {
+                val json = JSONObject(export.readText())
+                assertEquals(0L, json.getJSONObject("flexBlock").getLong("effectivePayCents"))
+                assertEquals("UNPAID_CANCELLATION", json.getJSONObject("flexBlock").getString("effectivePaySource"))
+                assertEquals(10.0, json.getJSONObject("mileageSummary").getDouble("totalOdometerMiles"), 0.0)
+            } finally { export.delete() }
+            repo.confirmFlexPay(id, 7900L, stamp(50))
+            assertEquals(7900L, repo.dao.shift(id)!!.flexConfirmedPayCents)
+            repo.confirmFlexPay(id, null, stamp(51))
+            assertNull(repo.dao.shift(id)!!.flexConfirmedPayCents)
+            assertEquals(7900L, repo.dao.shift(id)!!.flexBlockPayCents)
+        } finally { db.close() }
+    }
+
+    @Test fun migrationFromV6PreservesPaidReleaseAndActiveFlexOuting() = runBlocking {
+        val name = "flex-v6-outcomes.db"
+        context.deleteDatabase(name)
+        val schema = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("tracker-v6.json").bufferedReader().use { it.readText() }).getJSONObject("database")
+        val path = context.getDatabasePath(name).apply { parentFile?.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
+            val entities = schema.getJSONArray("entities")
+            for (i in 0 until entities.length()) {
+                val entity = entities.getJSONObject(i)
+                db.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", entity.getString("tableName")))
+                val indexes = entity.getJSONArray("indices")
+                for (j in 0 until indexes.length()) db.execSQL(indexes.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", entity.getString("tableName")))
+            }
+            val setup = schema.getJSONArray("setupQueries")
+            for (i in 0 until setup.length()) db.execSQL(setup.getString(i))
+            db.execSQL("INSERT INTO shifts (id,platform,state,queueMode,startedAtEpochMs,endedAtEpochMs,startOdometer,endOdometer,completedAtEpochMs,roundTripExpected,createdAtEpochMs,flexBlockPayCents) VALUES ('released','AMAZON_FLEX','COMPLETE','MANUAL',1000,2000,1000,1010,3000,1,1000,7900)")
+            db.execSQL("INSERT INTO tracking_events (id,shiftId,type,occurredAtEpochMs,payloadJson,syncState) VALUES ('release-event','released','FLEX_RELEASED_NO_ROUTE',2000,'{}','PENDING')")
+            db.execSQL("INSERT INTO shifts (id,platform,state,queueMode,startedAtEpochMs,startOdometer,roundTripExpected,createdAtEpochMs,flexBlockPayCents) VALUES ('active','AMAZON_FLEX','AT_STATION','MANUAL',4000,1010,1,4000,7900)")
+            db.version = 6
+        }
+        val db = Room.databaseBuilder(context, TrackerDatabase::class.java, name).addMigrations(TrackerDatabase.MIGRATION_6_7).build()
+        try {
+            val released = db.trackerDao().shift("released")!!
+            assertEquals("RELEASED_NO_ROUTE", released.flexOutcome)
+            assertEquals(7900L, released.flexBlockPayCents)
+            assertNull(released.flexConfirmedPayCents)
+            assertEquals(7900L, FlexPay.amountCents(released.flexBlockPayCents, released.flexOutcome, null))
+            val active = db.trackerDao().activeShift()!!
+            assertEquals("active", active.id)
+            assertEquals("AT_STATION", active.state)
+            assertNull(active.flexOutcome)
+            assertEquals(7900L, active.flexBlockPayCents)
+        } finally { db.close(); context.deleteDatabase(name) }
+    }
+
     @Test fun packageReturnAndNoRouteReleaseHaveCorrectFinishBoundaries() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, TrackerDatabase::class.java).build()
         try {
@@ -97,6 +166,8 @@ class FlexPersistenceTest {
             repo.startFlex(block, 1100.0, stamp(200))
             repo.flexAction(FlexAction.ARRIVE_STATION, stamp(205))
             repo.flexAction(FlexAction.RELEASE_NO_ROUTE, stamp(215))
+            assertEquals("RELEASED_NO_ROUTE", repo.dao.activeShift()!!.flexOutcome)
+            assertEquals(7900L, FlexPay.amountCents(repo.dao.activeShift()!!.flexBlockPayCents, repo.dao.activeShift()!!.flexOutcome, null))
             assertEquals(stamp(215).occurredAtEpochMs, repo.dao.activeShift()!!.endedAtEpochMs)
             assertEquals(EventType.FLEX_RELEASED_NO_ROUTE.name, repo.events(repo.dao.activeShift()!!.id).first { it.type.startsWith("FLEX_RELEASED") }.type)
         } finally { db.close() }
